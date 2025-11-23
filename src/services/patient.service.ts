@@ -4,6 +4,7 @@ import path from 'path';
 import axios from 'axios';
 import { postJson, getJson, ApiLogEntry } from '../utils/api';
 import createCaseSummary from './caseSummary.service';
+import { requestRecordLock, releaseRecordLock } from './support.service';
 import type { IGetDuplicatePatient } from '../models/getDuplicatePatients.interface';
 
 // module loaded (no debug log)
@@ -105,41 +106,8 @@ export async function getPatient(apiBaseUrl: string, patientId: number, token: s
 	return await getJson(url, 20000, headers, logFn);
 }
 
-async function requestRecordLock(patientId: number, token: string) {
-	const url = 'https://sisenterprise-api-329114e1-centralindia.siscompletedev.cloud/329114e1t1/api/Security/RecordLock/RequestLock';
-	const headers: Record<string, string> = {
-		'Content-Type': 'text/json',
-		Accept: 'text/json',
-		token,
-		Referer: 'https://sisenterprise-329114e1-centralindia.siscompletedev.cloud/',
-	};
-	const body = {
-		patientId,
-		recordLockTypeId: 13,
-		objectId: patientId,
-		moduleId: 2030,
-	};
-	const res = await axios.post(url, body, { headers, timeout: 10000, responseType: 'json' });
-	return res.data;
-}
 
-async function releaseRecordLock(patientId: number, token: string) {
-	const url = 'https://sisenterprise-api-329114e1-centralindia.siscompletedev.cloud/329114e1t1/api/Security/RecordLock/ReleaseLock';
-	const headers: Record<string, string> = {
-		'Content-Type': 'text/json',
-		Accept: 'text/json',
-		token,
-		Referer: 'https://sisenterprise-329114e1-centralindia.siscompletedev.cloud/',
-	};
-	const body = {
-		patientId,
-		recordLockTypeId: 13,
-		objectId: patientId,
-		moduleId: 2030,
-	};
-	const res = await axios.post(url, body, { headers, timeout: 10000, responseType: 'json' });
-	return res.data;
-}
+
 
 export async function createPatient(apiBaseUrl: string, token: string, patientPayload: any, logFn?: (entry: ApiLogEntry) => void, extraHeaders?: Record<string, string>) {
 	const base = String(apiBaseUrl).replace(/\/$/, '');
@@ -227,7 +195,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 								// Request a record lock for this patient before creating
 								let lockRes: any = null;
 								try {
-									lockRes = await requestRecordLock(thisPid, token);
+									lockRes = await requestRecordLock(thisPid, token, apiBaseUrl);
 									try { console.log('[requestRecordLock] response:', JSON.stringify(lockRes)); } catch (e) {}
 								} catch (e) {
 									outcomes[index - 1] = { index, request, response, fullPatient: full, error: `recordLock failed: ${String(e)}` } as any;
@@ -265,7 +233,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 									outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: cs } as any;
 									// release record lock for this patient
 									try {
-										const rel = await releaseRecordLock((patientSource && patientSource.patientId) ? (patientSource.patientId as number) : thisPid, token);
+										const rel = await releaseRecordLock((patientSource && patientSource.patientId) ? (patientSource.patientId as number) : thisPid, token, apiBaseUrl);
 										try { console.log('[releaseRecordLock] response:', JSON.stringify(rel)); } catch (e) {}
 									} catch (e) {
 										try { console.log('[releaseRecordLock] error:', String(e)); } catch (e) {}
