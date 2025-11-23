@@ -1,0 +1,14 @@
+{
+  "watch": ["server", "src"],
+  "ext": "ts,js,json",
+  "ignore": [
+    "dist",
+    "node_modules",
+    "src/templates/patients.json",
+    "src/templates/create-patients.json",
+    "src/templates/reqTemplates/CreatePatient.json",
+    "src/templates/**"
+  ],
+  "exec": "ts-node ./server/server.ts",
+  "delay": "250"
+}

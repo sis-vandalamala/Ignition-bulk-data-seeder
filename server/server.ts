@@ -1,0 +1,104 @@
+import express from 'express';
+import path from 'path';
+import { loginUser, logoutUser } from './auth';
+import { setGlobalApiLogger } from '../src/utils/api';
+import { postJson } from '../src/utils/api';
+import { createBasicPatients } from '../src/services/patient.service';
+
+const app = express();
+app.use(express.json());
+
+// Session middleware: capture token from incoming requests and store it on app.locals
+app.use((req, _res, next) => {
+	try {
+		const headerToken = (req.headers && (req.headers as any)['token']) || undefined;
+		const bodyToken = req.body && req.body.token ? req.body.token : undefined;
+		const token = headerToken || bodyToken;
+		if (token) {
+			const t = Array.isArray(token) ? token[0] : token;
+			(req.app.locals as any).token = t;
+		}
+	} catch (e) {
+		// ignore
+	}
+	next();
+});
+
+// serve UI
+app.use('/ui', express.static(path.join(__dirname, '..', 'src', 'ui')));
+
+app.post('/login', async (req, res) => {
+	const { username, password, facilityId, apiUrl } = req.body || {};
+	try {
+		// ensure a place to collect logs for this app instance
+		(req.app.locals as any).apiLogs = (req.app.locals as any).apiLogs || [];
+		const instanceLogs = (req.app.locals as any).apiLogs;
+		const logger = (entry: any) => { try { instanceLogs.push(entry); } catch (e) {} };
+
+		const out = await loginUser(apiUrl, username, password, facilityId, logger);
+		// if login returned a token, store it on the server app locals so server-side calls can reuse it
+		if (out && out.ok && out.token) {
+			(req.app.locals as any).token = out.token;
+			(req.app.locals as any).orgId = out.orgId;
+		}
+		// include any recorded logs from login in the response
+		res.json(Object.assign({}, out, { logs: instanceLogs }));
+	} catch (e: any) {
+		res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e) });
+	}
+});
+
+app.post('/logout', (req, res) => {
+	const { token } = req.body || {};
+	res.json(logoutUser(token));
+});
+
+app.post('/seed', (req, res) => {
+	// Capture logs for this run and return them to the UI when complete
+	const token = (req.app.locals as any).token || (req.headers as any).token || null;
+
+	const logs: Array<any> = [];
+	const logger = (entry: any) => {
+		try { logs.push(entry); } catch (e) {}
+	};
+
+	// set global logger so postJson calls anywhere will be captured
+	setGlobalApiLogger(logger);
+
+	// For now, parse opts and call appropriate action
+	(async () => {
+		try {
+			const opts = req.body && req.body.opts ? req.body.opts : {};
+			if (opts && opts.action === 'createBasicPatients') {
+				const runStart = Date.now();
+				// collect relevant headers from the incoming request to mimic UI behavior
+				const incoming = req.headers || {};
+				const extraHeaders: Record<string, string> = {};
+				const headerKeys = ['accept', 'content-type', 'origin', 'referer', 'user-agent', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform', 'priority'];
+				headerKeys.forEach(k => {
+					const v = (incoming as any)[k];
+					if (v) extraHeaders[k] = Array.isArray(v) ? v[0] : String(v);
+				});
+				const svcRes = await createBasicPatients({ apiBaseUrl: opts.apiUrl || opts.url, token, suffix: opts.suffix, count: Number(opts.count) || 1, concurrency: opts.concurrency, facilityId: opts.facilityId, logFn: logger, extraHeaders });
+				const runElapsedMs = Date.now() - runStart;
+				return res.json({ ok: true, result: svcRes, tokenPresent: !!token, logs, runElapsedMs });
+			}
+
+			// fallback demo behavior
+			if (req.body && req.body.runDemoCalls && req.body.demoUrl) {
+				try { await postJson(req.body.demoUrl, { ping: true }, 10000, { token }, logger); } catch (e) {}
+			} else {
+				await new Promise(r => setTimeout(r, 500));
+			}
+
+			return res.json({ ok: true, message: 'seed run finished (stub)', tokenPresent: !!token, logs });
+		} finally {
+			setGlobalApiLogger(undefined);
+		}
+	})();
+});
+
+const port = process.env.PORT ? Number(process.env.PORT) : 3000;
+app.listen(port, () => {});
+
+export default app;
