@@ -84,7 +84,36 @@
         </div>
       </div>
 
-      <div class="card">
+            <div class="card" id="supportCard" style="display:none">
+        <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+          <div style="width:180px">
+            <div class="field">
+              <label>Room</label>
+              <select id="roomSelect">
+                <option value="" disabled selected>Loading...</option>
+              </select>
+            </div>
+          </div>
+          <div style="width:220px">
+            <div class="field">
+              <label>Appointment Type</label>
+              <select id="apptTypeSelect">
+                <option value="" disabled selected>Loading...</option>
+              </select>
+            </div>
+          </div>
+          <div style="width:260px">
+            <div class="field">
+              <label>Physician</label>
+              <select id="physicianSelect">
+                <option value="" disabled selected>Loading...</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="card" id="seedCard" style="display:none">
         <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
           <div style="flex:1;min-width:320px">
             <div class="field">
@@ -111,6 +140,8 @@
           <button id="runBtn">Run</button>
         </div>
       </div>
+
+
 
       <!-- Rooms removed (disabled while not used) -->
 

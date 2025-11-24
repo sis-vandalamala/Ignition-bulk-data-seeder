@@ -10,6 +10,9 @@
   const suffix = $('suffix');
   const count = $('count');
   const concurrency = $('concurrency');
+  const roomSelect = $('roomSelect');
+  const apptTypeSelect = $('apptTypeSelect');
+  const physicianSelect = $('physicianSelect');
   const runBtn = $('runBtn');
   const pwdToggle = document.getElementById('pwdToggle');
 
@@ -31,6 +34,37 @@
     if (j && j.ok && j.token) {
       token = j.token;
       log('Logged in — token stored in-memory');
+      try { document.getElementById('seedCard').style.display = ''; } catch (e) {}
+      try { document.getElementById('supportCard').style.display = ''; } catch (e) {}
+      // populate selects from returned support data if present
+      try {
+        if (j.rooms && Array.isArray(j.rooms) && roomSelect) {
+          roomSelect.innerHTML = j.rooms.map(r => {
+            const value = r.roomTypeId ?? r.roomTypeID ?? r.RoomTypeId ?? r.id ?? '';
+            const label = r.name ?? r.roomName ?? r.RoomName ?? r.displayName ?? JSON.stringify(r);
+            return `<option value="${value}">${label}</option>`;
+          }).join('');
+          // select first available
+          if (roomSelect.options && roomSelect.options.length) roomSelect.selectedIndex = 0;
+        }
+        if (j.appointmentTypes && Array.isArray(j.appointmentTypes) && apptTypeSelect) {
+          apptTypeSelect.innerHTML = j.appointmentTypes.map(a => {
+            const value = a.appointmentTypeId ?? a.appointmentTypeID ?? a.AppointmentTypeId ?? a.appTypeId ?? a.id ?? '';
+            const label = a.appointment_Type_Desc ?? a.appTypeDesc ?? a.description ?? a.name ?? JSON.stringify(a);
+            return `<option value="${value}">${label}</option>`;
+          }).join('');
+          if (apptTypeSelect.options && apptTypeSelect.options.length) apptTypeSelect.selectedIndex = 0;
+        }
+        if (j.physicians && Array.isArray(j.physicians) && physicianSelect) {
+          physicianSelect.innerHTML = j.physicians.map(p => {
+            const value = p.personId ?? p.PersonId ?? p.staffId ?? p.id ?? '';
+            const computedName = `${p.firstName || ''} ${p.lastName || ''}`.trim();
+            const label = (p.fullName ?? p.FullName ?? p.name ?? computedName) || JSON.stringify(p);
+            return `<option value="${value}">${label}</option>`;
+          }).join('');
+          if (physicianSelect.options && physicianSelect.options.length) physicianSelect.selectedIndex = 0;
+        }
+      } catch (e) { log('populate selects error'); }
       try {
         if (j && Array.isArray(j.logs)) {
           log('--- Login API Logs ---');
@@ -46,6 +80,8 @@
       } catch (e) { log('render login logs error'); }
     } else {
       log('Login failed: ' + JSON.stringify(j));
+      try { document.getElementById('seedCard').style.display = 'none'; } catch (e) {}
+      try { document.getElementById('supportCard').style.display = 'none'; } catch (e) {}
     }
   });
 
@@ -86,6 +122,9 @@
         facilityId: Number(facilityId.value),
         username: username.value,
         password: password.value
+        , room: roomSelect ? roomSelect.value : undefined
+        , appointmentType: apptTypeSelect ? apptTypeSelect.value : undefined
+        , physician: physicianSelect ? physicianSelect.value : undefined
       }
     };
     log('Sending seed request: ' + JSON.stringify(payload));
