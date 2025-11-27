@@ -6,6 +6,7 @@ import { postJson, getJson, ApiLogEntry } from '../utils/api';
 import createCaseSummary from './caseSummary.service';
 import { requestRecordLock, releaseRecordLock } from './support.service';
 import { runDischargeFlow } from './discharge.service';
+import codingChargeEntry from './codingChargeEntry.service';
 import type { IGetDuplicatePatient } from '../models/getDuplicatePatients.interface';
 
 // module loaded (no debug log)
@@ -246,6 +247,15 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 										const passCaseSummaryId = cs && (cs.caseSummaryId || cs.caseSummaryID || cs.caseSummaryId === 0) ? (cs.caseSummaryId ?? cs.caseSummaryID) : undefined;
 										try { console.log('[createBasicPatients] calling runDischargeFlow', { userName: opts.username, passPatientId, passCaseSummaryId, facilityId: opts.facilityId }); } catch (e) {}
 										await runDischargeFlow(opts.username, apiBaseUrl, token, logFn, passPatientId, passCaseSummaryId as any, opts.facilityId);
+										// After discharge flow completes, run coding charge entry (cases-to-code)
+										try {
+											if (passCaseSummaryId) {
+												try { console.log('[createBasicPatients] calling performPatientCasesToCode', { caseSummaryId: passCaseSummaryId }); } catch (e) {}
+												await codingChargeEntry.performPatientCasesToCode(apiBaseUrl, String(passCaseSummaryId), token, logFn);
+											}
+										} catch (codeErr) {
+											try { console.log('[performPatientCasesToCode] error:', String(codeErr)); } catch (e) {}
+										}
 									} catch (dfErr) {
 										try { console.log('[runDischargeFlow] error:', String(dfErr)); } catch (e) {}
 									}
