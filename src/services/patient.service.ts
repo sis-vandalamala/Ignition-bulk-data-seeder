@@ -5,6 +5,7 @@ import axios from 'axios';
 import { postJson, getJson, ApiLogEntry } from '../utils/api';
 import createCaseSummary from './caseSummary.service';
 import { requestRecordLock, releaseRecordLock } from './support.service';
+import { runDischargeFlow } from './discharge.service';
 import type { IGetDuplicatePatient } from '../models/getDuplicatePatients.interface';
 
 // module loaded (no debug log)
@@ -86,6 +87,7 @@ export type CreateBasicPatientsOptions = {
 	concurrency?: number;
 	facilityId?: number;
 	logFn?: (entry: ApiLogEntry) => void;
+	username?: string;
 	extraHeaders?: Record<string, string>;
 };
 
@@ -237,6 +239,15 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 										try { console.log('[releaseRecordLock] response:', JSON.stringify(rel)); } catch (e) {}
 									} catch (e) {
 										try { console.log('[releaseRecordLock] error:', String(e)); } catch (e) {}
+									}
+									// after releasing the record lock, trigger discharge flow (best-effort)
+									try {
+										const passPatientId = (patientSource && patientSource.patientId) ? (patientSource.patientId as number) : thisPid;
+										const passCaseSummaryId = cs && (cs.caseSummaryId || cs.caseSummaryID || cs.caseSummaryId === 0) ? (cs.caseSummaryId ?? cs.caseSummaryID) : undefined;
+										try { console.log('[createBasicPatients] calling runDischargeFlow', { userName: opts.username, passPatientId, passCaseSummaryId, facilityId: opts.facilityId }); } catch (e) {}
+										await runDischargeFlow(opts.username, apiBaseUrl, token, logFn, passPatientId, passCaseSummaryId as any, opts.facilityId);
+									} catch (dfErr) {
+										try { console.log('[runDischargeFlow] error:', String(dfErr)); } catch (e) {}
 									}
 						} catch (csErr) {
 							// attach case summary error but keep previous data
