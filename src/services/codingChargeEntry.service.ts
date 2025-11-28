@@ -26,7 +26,7 @@ export async function getICDCode(apiBaseUrl: string, icdCode: string, token: str
 }
 
 
-export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryId: string, token: string, logFn?: (entry: ApiLogEntry) => void) {
+export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryId: string, token: string, logFn?: (entry: ApiLogEntry) => void, options?: { chargeEntry?: boolean }) {
   const diagnosisCode = DEFAULT_DIAG_CODE;
   // load template
   const tplPath = path.join(__dirname, '..', 'reqTemplates', 'CasesToCodeRequest.json');
@@ -99,13 +99,18 @@ export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryI
     try { console.log('[performPatientCasesToCode] failed to parse casesToCode response, passing raw value to charge entry'); } catch (ee) {}
   }
 
-  try {
-    try { console.log('[performPatientCasesToCode] calling performPatientChargeEntry'); } catch (ee) {}
-    const chargeResult = await performPatientChargeEntry(apiBaseUrl, respObj, 'A_2018', 'bone', '200', token, logFn);
-    try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'ok', timestamp: new Date().toISOString(), durationMs: 0 } as any); } catch (e) {}
-    try { console.log('[performPatientChargeEntry] result:', JSON.stringify(chargeResult)); } catch (e) {}
-  } catch (e) {
-    try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'error', error: String(e), timestamp: new Date().toISOString() } as any); } catch (ee) {}
+  const doChargeEntry = options && Object.prototype.hasOwnProperty.call(options, 'chargeEntry') ? !!options.chargeEntry : true;
+  if (doChargeEntry) {
+    try {
+      try { console.log('[performPatientCasesToCode] calling performPatientChargeEntry'); } catch (ee) {}
+      const chargeResult = await performPatientChargeEntry(apiBaseUrl, respObj, 'A_2018', 'bone', '200', token, logFn);
+      try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'ok', timestamp: new Date().toISOString(), durationMs: 0 } as any); } catch (e) {}
+      try { console.log('[performPatientChargeEntry] result:', JSON.stringify(chargeResult)); } catch (e) {}
+    } catch (e) {
+      try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'error', error: String(e), timestamp: new Date().toISOString() } as any); } catch (ee) {}
+    }
+  } else {
+    try { console.log('[performPatientCasesToCode] charge entry skipped (options.chargeEntry=false)'); } catch (e) {}
   }
 }
 

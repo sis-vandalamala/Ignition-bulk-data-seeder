@@ -90,6 +90,7 @@ export type CreateBasicPatientsOptions = {
 	logFn?: (entry: ApiLogEntry) => void;
 	username?: string;
 	extraHeaders?: Record<string, string>;
+    flowDepth?: number; // 0 create only,1 discharge,2 cases-to-code,3 charge entry
 };
 
 export type CreateBasicPatientResult = {
@@ -245,16 +246,16 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 									try {
 										const passPatientId = (patientSource && patientSource.patientId) ? (patientSource.patientId as number) : thisPid;
 										const passCaseSummaryId = cs && (cs.caseSummaryId || cs.caseSummaryID || cs.caseSummaryId === 0) ? (cs.caseSummaryId ?? cs.caseSummaryID) : undefined;
-										try { console.log('[createBasicPatients] calling runDischargeFlow', { userName: opts.username, passPatientId, passCaseSummaryId, facilityId: opts.facilityId }); } catch (e) {}
-										await runDischargeFlow(opts.username, apiBaseUrl, token, logFn, passPatientId, passCaseSummaryId as any, opts.facilityId);
-										// After discharge flow completes, run coding charge entry (cases-to-code)
-										try {
-											if (passCaseSummaryId) {
-												try { console.log('[createBasicPatients] calling performPatientCasesToCode', { caseSummaryId: passCaseSummaryId }); } catch (e) {}
-												await codingChargeEntry.performPatientCasesToCode(apiBaseUrl, String(passCaseSummaryId), token, logFn);
-											}
-										} catch (codeErr) {
-											try { console.log('[performPatientCasesToCode] error:', String(codeErr)); } catch (e) {}
+										const depth = (typeof opts.flowDepth === 'number' ? opts.flowDepth : 3);
+										// depth >=1 => discharge
+										if (depth >= 1) {
+											try { console.log('[createBasicPatients] depth>=1 runDischargeFlow', { depth, userName: opts.username, passPatientId, passCaseSummaryId, facilityId: opts.facilityId }); } catch (e) {}
+											await runDischargeFlow(opts.username, apiBaseUrl, token, logFn, passPatientId, passCaseSummaryId as any, opts.facilityId);
+										}
+										// depth >=2 => cases-to-code; depth >=3 => include charge entry
+										if (passCaseSummaryId && depth >= 2) {
+											try { console.log('[createBasicPatients] depth>=2 performPatientCasesToCode', { depth, caseSummaryId: passCaseSummaryId }); } catch (e) {}
+											await codingChargeEntry.performPatientCasesToCode(apiBaseUrl, String(passCaseSummaryId), token, logFn, { chargeEntry: depth >= 3 });
 										}
 									} catch (dfErr) {
 										try { console.log('[runDischargeFlow] error:', String(dfErr)); } catch (e) {}

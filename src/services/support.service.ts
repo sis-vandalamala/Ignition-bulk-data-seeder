@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getJson } from '../utils/api';
 
 export async function requestRecordLock(patientId: number, token: string, apiBaseUrl?: string) {
     if (!apiBaseUrl) throw new Error('apiBaseUrl is required for requestRecordLock');
@@ -52,17 +53,10 @@ export async function getRoomsForOrganization(token: string, apiBaseUrl?: string
         token,
         Referer: base + '/',
     };
-    try {
-        const res = await axios.get(url, { headers, timeout: 10000, responseType: 'json' });
-        try {
-            const first = Array.isArray(res.data) ? res.data[0] : res.data;
-            console.log('[getRoomsForOrganization] response:', first);
-        } catch (e) {}
-        return res.data;
-    } catch (err: any) {
-        try { console.log('[getRoomsForOrganization] error:', err); } catch (e) {}
-        throw err;
-    }
+    // Use shared getJson so the global API logger captures this call
+    const res = await getJson(url, 10000, headers);
+    try { const first = Array.isArray(res) ? res[0] : res; console.log('[getRoomsForOrganization] response:', first); } catch (e) {}
+    return res;
 }
 
 export async function getAppointmentTypeNameAndID(token: string, apiBaseUrl?: string) {
@@ -75,17 +69,9 @@ export async function getAppointmentTypeNameAndID(token: string, apiBaseUrl?: st
         token,
         Referer: base + '/',
     };
-    try {
-        const res = await axios.get(url, { headers, timeout: 10000, responseType: 'json' });
-        try {
-            const first = Array.isArray(res.data) ? res.data[0] : res.data;
-            console.log('[getAppointmentTypeNameAndID] response:', first);
-        } catch (e) {}
-        return res.data;
-    } catch (err: any) {
-        try { console.log('[getAppointmentTypeNameAndID] error:', err); } catch (e) {}
-        throw err;
-    }
+    const res = await getJson(url, 10000, headers);
+    try { const first = Array.isArray(res) ? res[0] : res; console.log('[getAppointmentTypeNameAndID] response:', first); } catch (e) {}
+    return res;
 }
 
 export async function getPhysicianNameAndID(token: string, apiBaseUrl?: string, orgId?: number, includeInactive = false) {
@@ -98,17 +84,9 @@ export async function getPhysicianNameAndID(token: string, apiBaseUrl?: string, 
         token,
         Referer: base + '/',
     };
-    try {
-        const res = await axios.get(url, { headers, timeout: 10000, responseType: 'json' });
-        try {
-            const first = Array.isArray(res.data) ? res.data[0] : res.data;
-            console.log('[getPhysicianNameAndID] response:', first);
-        } catch (e) {}
-        return res.data;
-    } catch (err: any) {
-        try { console.log('[getPhysicianNameAndID] error:', err); } catch (e) {}
-        throw err;
-    }
+    const res = await getJson(url, 10000, headers);
+    try { const first = Array.isArray(res) ? res[0] : res; console.log('[getPhysicianNameAndID] response:', first); } catch (e) {}
+    return res;
 }
 
 export default {

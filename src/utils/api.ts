@@ -18,6 +18,7 @@ export function setGlobalApiLogger(fn?: (entry: ApiLogEntry) => void) {
 }
 
 export async function postJson(url: string, payload: any, timeout = 5000, headers?: Record<string, any>, logFn?: (entry: ApiLogEntry) => void) {
+	try { console.debug('[postJson] url=', url, 'headers=', headers ? Object.keys(headers) : 'none'); } catch (e) {}
 	const start = Date.now();
 	const startIso = new Date(start).toISOString();
 	const opts: any = { timeout };
@@ -32,10 +33,12 @@ export async function postJson(url: string, payload: any, timeout = 5000, header
 		try { if (globalLogger) globalLogger(entry); } catch (e) {}
 		return res.data;
 	} catch (err: any) {
-		const end = Date.now();
-		const endIso = new Date(end).toISOString();
-		const duration = end - start;
-		const entry: ApiLogEntry = { url, method: 'POST', status: 'error', durationMs: duration, error: err && err.message ? err.message : String(err), startTime: startIso, endTime: endIso, timestamp: endIso };
+			const end = Date.now();
+			const endIso = new Date(end).toISOString();
+			const duration = end - start;
+			const resp = err && err.response ? err.response : undefined;
+			const statusVal = resp && resp.status ? resp.status : 'error';
+			const entry: ApiLogEntry = { url, method: 'POST', status: statusVal, durationMs: duration, error: err && err.message ? err.message : String(err), startTime: startIso, endTime: endIso, timestamp: endIso };
 		try { if (logFn) logFn(entry); } catch (e) {}
 		try { if (globalLogger) globalLogger(entry); } catch (e) {}
 		throw err;
@@ -43,6 +46,7 @@ export async function postJson(url: string, payload: any, timeout = 5000, header
 }
 
 export async function getJson(url: string, timeout = 5000, headers?: Record<string, any>, logFn?: (entry: ApiLogEntry) => void) {
+	try { console.debug('[getJson] url=', url, 'headers=', headers ? Object.keys(headers) : 'none'); } catch (e) {}
 	const start = Date.now();
 	const startIso = new Date(start).toISOString();
 	const opts: any = { timeout };
@@ -57,10 +61,12 @@ export async function getJson(url: string, timeout = 5000, headers?: Record<stri
 		try { if (globalLogger) globalLogger(entry); } catch (e) {}
 		return res.data;
 	} catch (err: any) {
-		const end = Date.now();
-		const endIso = new Date(end).toISOString();
-		const duration = end - start;
-		const entry: ApiLogEntry = { url, method: 'GET', status: 'error', durationMs: duration, error: err && err.message ? err.message : String(err), startTime: startIso, endTime: endIso, timestamp: endIso };
+			const end = Date.now();
+			const endIso = new Date(end).toISOString();
+			const duration = end - start;
+			const resp = err && err.response ? err.response : undefined;
+			const statusVal = resp && resp.status ? resp.status : 'error';
+			const entry: ApiLogEntry = { url, method: 'GET', status: statusVal, durationMs: duration, error: err && err.message ? err.message : String(err), startTime: startIso, endTime: endIso, timestamp: endIso };
 		try { if (logFn) logFn(entry); } catch (e) {}
 		try { if (globalLogger) globalLogger(entry); } catch (e) {}
 		throw err;

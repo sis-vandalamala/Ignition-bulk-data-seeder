@@ -4,6 +4,7 @@ import { loginUser, logoutUser } from './auth';
 import { setGlobalApiLogger } from '../src/utils/api';
 import { postJson } from '../src/utils/api';
 import { createBasicPatients } from '../src/services/patient.service';
+import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID } from '../src/services/support.service';
 
 const app = express();
 app.use(express.json());
@@ -30,8 +31,8 @@ app.use('/ui', express.static(path.join(__dirname, '..', 'src', 'ui')));
 app.post('/login', async (req, res) => {
 	const { username, password, facilityId, apiUrl } = req.body || {};
 	try {
-		// ensure a place to collect logs for this app instance
-		(req.app.locals as any).apiLogs = (req.app.locals as any).apiLogs || [];
+		// ensure a fresh place to collect logs for this login request (clear previous)
+		(req.app.locals as any).apiLogs = [];
 		const instanceLogs = (req.app.locals as any).apiLogs;
 		const logger = (entry: any) => { try { instanceLogs.push(entry); } catch (e) {} };
 
@@ -79,7 +80,18 @@ app.post('/seed', (req, res) => {
 					const v = (incoming as any)[k];
 					if (v) extraHeaders[k] = Array.isArray(v) ? v[0] : String(v);
 				});
-				const svcRes = await createBasicPatients({ apiBaseUrl: opts.apiUrl || opts.url, token, suffix: opts.suffix, count: Number(opts.count) || 1, concurrency: opts.concurrency, facilityId: opts.facilityId, logFn: logger, extraHeaders });
+				const svcRes = await createBasicPatients({
+					apiBaseUrl: opts.apiUrl || opts.url,
+					token,
+					suffix: opts.suffix,
+					count: Number(opts.count) || 1,
+					concurrency: opts.concurrency,
+					facilityId: opts.facilityId,
+					logFn: logger,
+					extraHeaders,
+					username: opts.username,
+					flowDepth: typeof opts.flowDepth === 'number' ? opts.flowDepth : undefined,
+				});
 				const runElapsedMs = Date.now() - runStart;
 				return res.json({ ok: true, result: svcRes, tokenPresent: !!token, logs, runElapsedMs });
 			}
@@ -96,6 +108,54 @@ app.post('/seed', (req, res) => {
 			setGlobalApiLogger(undefined);
 		}
 	})();
+});
+
+// progress polling endpoint removed
+
+// Support data endpoint: fetch rooms, appointment types, physicians for given facility/org
+app.post('/support-data', async (req, res) => {
+	try {
+		const token = (req.app.locals as any).token || (req.headers as any).token || null;
+		const apiUrl = (req.body && req.body.apiUrl) ? req.body.apiUrl : (req.body && req.body.apiBaseUrl ? req.body.apiBaseUrl : undefined);
+		const facilityId = (req.body && (req.body.facilityId ?? req.body.orgId)) as number | undefined;
+		if (!apiUrl) return res.status(400).json({ ok: false, error: 'apiUrl is required' });
+		if (facilityId === undefined) return res.status(400).json({ ok: false, error: 'facilityId (orgId) is required' });
+
+		const logs: Array<any> = [];
+		const logger = (entry: any) => { try { logs.push(entry); } catch (e) {} };
+		try {
+			setGlobalApiLogger(logger);
+			let rooms: any = null;
+			let appointmentTypes: any = null;
+			let physicians: any = null;
+			try {
+				try {
+					rooms = await getRoomsForOrganization(token as any, apiUrl);
+					try { console.log('[support-data] rooms fetched, count=', Array.isArray(rooms) ? rooms.length : 'obj'); } catch (e) {}
+				} catch (e: any) { console.error('[support-data] getRoomsForOrganization error', e && e.message ? e.message : e); }
+
+				try {
+					appointmentTypes = await getAppointmentTypeNameAndID(token as any, apiUrl);
+					try { console.log('[support-data] appointmentTypes fetched, count=', Array.isArray(appointmentTypes) ? appointmentTypes.length : 'obj'); } catch (e) {}
+				} catch (e: any) { console.error('[support-data] getAppointmentTypeNameAndID error', e && e.message ? e.message : e); }
+
+				try {
+					physicians = await getPhysicianNameAndID(token as any, apiUrl, Number(facilityId), false);
+					try { console.log('[support-data] physicians fetched, count=', Array.isArray(physicians) ? physicians.length : 'obj'); } catch (e) {}
+				} catch (e: any) { console.error('[support-data] getPhysicianNameAndID error', e && e.message ? e.message : e); }
+
+				try { console.log('[support-data] captured logs:', logs.length); if (logs.length) console.log('[support-data] sample log:', logs[0]); } catch (e) {}
+				return res.json({ ok: true, rooms, appointmentTypes, physicians, logs });
+			} finally {
+				try { setGlobalApiLogger(undefined); } catch (e) {}
+			}
+		} finally {
+			try { setGlobalApiLogger(undefined); } catch (e) {}
+		}
+	} catch (e: any) {
+		try { setGlobalApiLogger(undefined); } catch (ee) {}
+		return res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e) });
+	}
 });
 
 const port = process.env.PORT ? Number(process.env.PORT) : 3000;
