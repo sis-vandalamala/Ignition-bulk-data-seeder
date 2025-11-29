@@ -20,6 +20,8 @@
       .title p{margin:0;color:var(--muted);font-size:13px}
 
       .card{background:var(--card);border-radius:12px;padding:18px;box-shadow:0 6px 18px rgba(15,23,42,0.06);margin-bottom:18px}
+      .card.collapsed{padding-bottom:8px}
+      .card .card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
       .row{display:flex;gap:16px;align-items:center}
       .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
       label{font-size:13px;color:#111827}
@@ -77,34 +79,45 @@
         </div>
       </div>
 
-      <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
-          <div style="flex:1;min-width:280px">
-            <div class="grid">
-              <div class="field">
-                <label>Facility Id</label>
-                <input id="facilityId" type="number" placeholder="e.g. 2030" value="40"/>
-              </div>
-              <div class="field" style="grid-column: span 3">
-                <label>Target API URL</label>
-                <input id="apiUrl" type="url" value="https://sisenterprise-api-329114e1-centralindia.siscompletedev.cloud/329114e1t1" placeholder="https://sisenterprise-api-329114e1-centralindia.siscompletedev.cloud/329114e1t1" />
-              </div>
-              <div class="field">
-                <label>Username</label>
-                <input id="username" type="text" placeholder="username" value="sisadmin"/>
-              </div>
-              <div class="field" style="position:relative">
-                <label>Password</label>
-                <div style="position:relative;display:flex;align-items:center">
-                  <input id="password" type="password" placeholder="password" style="flex:1" value="Test#123"/>
-                  <button id="pwdToggle" title="Show password" aria-pressed="false" style="margin-left:8px;border-radius:8px;padding:8px;border:none;background:transparent;cursor:pointer">Show</button>
+      <div class="card" id="loginCard">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-weight:700">Login</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button id="loginCollapseBtn" title="Collapse" aria-expanded="true" style="all:unset;cursor:pointer;display:flex;align-items:center;gap:6px">
+              <span id="loginCollapseIcon" style="display:inline-block;transform:rotate(0deg);transition:transform .2s">▾</span>
+              <span id="loginCollapseLabel" style="font-size:13px;color:var(--muted)">Collapse</span>
+            </button>
+          </div>
+        </div>
+        <div id="loginCardBody">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
+            <div style="flex:1;min-width:280px">
+              <div class="grid">
+                <div class="field">
+                  <label>Facility Id</label>
+                  <input id="facilityId" type="number" placeholder="e.g. 2030" value="40"/>
+                </div>
+                <div class="field" style="grid-column: span 3">
+                  <label>Target API URL</label>
+                  <input id="apiUrl" type="url" value="https://sisenterprise-api-329114e1-centralindia.siscompletedev.cloud/329114e1t1" placeholder="https://sisenterprise-api-329114e1-centralindia.siscompletedev.cloud/329114e1t1" />
+                </div>
+                <div class="field">
+                  <label>Username</label>
+                  <input id="username" type="text" placeholder="username" value="sisadmin"/>
+                </div>
+                <div class="field" style="position:relative">
+                  <label>Password</label>
+                  <div style="position:relative;display:flex;align-items:center">
+                    <input id="password" type="password" placeholder="password" style="flex:1" value="Test#123"/>
+                    <button id="pwdToggle" title="Show password" aria-pressed="false" style="margin-left:8px;border-radius:8px;padding:8px;border:none;background:transparent;cursor:pointer">Show</button>
+                  </div>
                 </div>
               </div>
+              <div class="actions">
+                <button id="loginBtn">Login</button>
+              </div>
+              <div class="hint">Click Login to authenticate against the server and obtain a token for seeding.</div>
             </div>
-            <div class="actions">
-              <button id="loginBtn">Login</button>
-            </div>
-            <div class="hint">Click Login to authenticate against the server and obtain a token for seeding.</div>
           </div>
         </div>
       </div>

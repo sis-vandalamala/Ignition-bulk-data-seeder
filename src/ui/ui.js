@@ -6,6 +6,11 @@
   const username = $('username');
   const password = $('password');
   const loginBtn = $('loginBtn');
+  const loginCard = $('loginCard');
+  const loginCardBody = $('loginCardBody');
+  const loginCollapseBtn = $('loginCollapseBtn');
+  const loginCollapseIcon = $('loginCollapseIcon');
+  const loginCollapseLabel = $('loginCollapseLabel');
   // logout button removed
   const suffix = $('suffix');
   const count = $('count');
@@ -13,7 +18,9 @@
   const roomSelect = $('roomSelect');
   const apptTypeSelect = $('apptTypeSelect');
   const physicianSelect = $('physicianSelect');
+  const cptSelect = $('cptSelect');
   const runBtn = $('runBtn');
+  const logoEl = document.querySelector('.logo');
   const pwdToggle = document.getElementById('pwdToggle');
   // workflow depth slider (0 create,1 discharge,2 cases-to-code,3 charge entry)
   const flowDepth = $('flowDepth');
@@ -108,6 +115,16 @@
     const j = await res.json();
     if (j && j.ok && j.token) {
       token = j.token;
+      // Auto-collapse body, keep header visible
+      try {
+        if (loginCardBody) {
+          loginCardBody.style.display = 'none';
+          if (loginCollapseIcon) loginCollapseIcon.style.transform = 'rotate(-90deg)';
+          if (loginCollapseLabel) loginCollapseLabel.textContent = 'Expand';
+          if (loginCollapseBtn) loginCollapseBtn.setAttribute('aria-expanded','false');
+          if (loginCard) loginCard.classList.add('collapsed');
+        }
+      } catch (e) {}
       // Logged in — keep UI clean, skip noisy logs
       try { document.getElementById('seedCard').style.display = ''; } catch (e) {}
       try { document.getElementById('supportCard').style.display = ''; } catch (e) {}
@@ -176,6 +193,16 @@
               }).join('');
               if (physicianSelect.options && physicianSelect.options.length) physicianSelect.selectedIndex = 0;
             }
+            if (sup.feeSchedule && Array.isArray(sup.feeSchedule) && cptSelect) {
+              cptSelect.innerHTML = sup.feeSchedule.map(fs => {
+                const val = fs?.cptProcedure?.cptProcedureId ?? fs?.cptProcedureId ?? fs?.id ?? '';
+                const code = fs?.cptProcedure?.cptCode ?? fs?.cptCode ?? fs?.code ?? '';
+                const desc = fs?.cptProcedure?.cptDescription ?? fs?.cptDescription ?? fs?.description ?? '';
+                const label = [code, desc].filter(Boolean).join(' - ') || JSON.stringify(fs);
+                return `<option value="${val}">${label}</option>`;
+              }).join('');
+              if (cptSelect.options && cptSelect.options.length) cptSelect.selectedIndex = 0;
+            }
           } catch (e) { /* ignore populate support selects error */ }
           try {
             if (sup && Array.isArray(sup.logs)) {
@@ -218,6 +245,24 @@
 
   // logout removed — token is kept in-memory until page reload
 
+  if (loginCollapseBtn) {
+    loginCollapseBtn.addEventListener('click', () => {
+      if (!loginCardBody) return;
+      const isHidden = loginCardBody.style.display === 'none';
+      if (isHidden) {
+        loginCardBody.style.display = 'block';
+        if (loginCollapseIcon) loginCollapseIcon.style.transform = 'rotate(0deg)';
+        if (loginCollapseLabel) loginCollapseLabel.textContent = 'Collapse';
+        if (loginCard) loginCard.classList.remove('collapsed');
+      } else {
+        loginCardBody.style.display = 'none';
+        if (loginCollapseIcon) loginCollapseIcon.style.transform = 'rotate(-90deg)';
+        if (loginCollapseLabel) loginCollapseLabel.textContent = 'Expand';
+        if (loginCard) loginCard.classList.add('collapsed');
+      }
+    });
+  }
+
   if (pwdToggle) {
     pwdToggle.addEventListener('click', (e) => {
       e.preventDefault();
@@ -240,8 +285,24 @@
   }
 
   runBtn.addEventListener('click', async () => {
+    try { if (logoEl) logoEl.classList.add('running'); } catch (e) {}
     // reset elapsed display for this run (seconds)
     try { if (elapsedEl) elapsedEl.textContent = 'Total: 0.00s'; } catch (e) {}
+    // Gather selected labels for room, appointment type, physician
+    const selRoomId = roomSelect && roomSelect.value ? Number(roomSelect.value) : undefined;
+    const selRoomName = (roomSelect && roomSelect.selectedOptions && roomSelect.selectedOptions[0]) ? roomSelect.selectedOptions[0].textContent : undefined;
+    const selApptTypeId = apptTypeSelect && apptTypeSelect.value ? Number(apptTypeSelect.value) : undefined;
+    const selApptTypeName = (apptTypeSelect && apptTypeSelect.selectedOptions && apptTypeSelect.selectedOptions[0]) ? apptTypeSelect.selectedOptions[0].textContent : undefined;
+    const selPhysicianId = physicianSelect && physicianSelect.value ? Number(physicianSelect.value) : undefined;
+    const selPhysicianName = (physicianSelect && physicianSelect.selectedOptions && physicianSelect.selectedOptions[0]) ? physicianSelect.selectedOptions[0].textContent : undefined;
+    const selCptProcedureId = cptSelect && cptSelect.value ? Number(cptSelect.value) : undefined;
+    const selCptLabel = (cptSelect && cptSelect.selectedOptions && cptSelect.selectedOptions[0]) ? cptSelect.selectedOptions[0].textContent : undefined;
+    const selCptCode = (() => {
+      if (!selCptLabel) return undefined;
+      const parts = String(selCptLabel).split(' - ');
+      return parts[0] && parts[0].trim() ? parts[0].trim() : undefined;
+    })();
+
     const payload = {
       opts: {
         action: 'createBasicPatients',
@@ -253,15 +314,21 @@
         facilityId: Number(facilityId.value),
         username: username.value,
         password: password.value
-        , room: roomSelect ? roomSelect.value : undefined
-        , appointmentType: apptTypeSelect ? apptTypeSelect.value : undefined
-        , physician: physicianSelect ? physicianSelect.value : undefined
+        , roomId: selRoomId
+        , roomName: selRoomName
+        , appointmentTypeId: selApptTypeId
+        , appointmentTypeName: selApptTypeName
+        , physicianId: selPhysicianId
+        , physician: selPhysicianName
+        , cptProcedureId: selCptProcedureId
+        , cptCode: selCptCode
         , flowDepth: flowDepth ? Number(flowDepth.value) : 3
       }
     };
     log('Sending seed request: ' + JSON.stringify(payload));
     const res = await fetch('/seed', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
     const j = await res.json();
+    try { if (logoEl) logoEl.classList.remove('running'); } catch (e) {}
     log('Seed response: ' + JSON.stringify(j));
     // update progress stepper from response
     try { /* no progress UI to update */ } catch (e) {}
