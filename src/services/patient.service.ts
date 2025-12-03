@@ -87,6 +87,8 @@ export type CreateBasicPatientsOptions = {
 	count: number;
 	concurrency?: number;
 	facilityId?: number;
+	roomIdOverride?: number;
+	roomNameOverride?: string;
 	logFn?: (entry: ApiLogEntry) => void;
 	username?: string;
 	extraHeaders?: Record<string, string>;
@@ -231,7 +233,8 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 								apiBaseUrl,
 								token,
 								patientResponse: patientSource,
-								roomIdOverride: (patientSource && (patientSource.roomId || patientSource.roomId === 0)) ? (patientSource.roomId as number) : undefined,
+								roomIdOverride: (patientSource && (patientSource.roomId || patientSource.roomId === 0)) ? (patientSource.roomId as number) : (opts.roomIdOverride === undefined ? undefined : opts.roomIdOverride),
+								roomNameOverride: (patientSource && patientSource.roomName) ? (patientSource.roomName as string) : (opts.roomNameOverride === undefined ? undefined : opts.roomNameOverride),
 								logFn,
 							});
 									outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: cs } as any;

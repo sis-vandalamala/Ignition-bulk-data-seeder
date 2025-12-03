@@ -118,6 +118,7 @@ export type CreateCaseSummaryOptions = {
 	caseSummary?: MergeableCaseSummary;
 	patientResponse?: CreatePatientResult;
 	roomIdOverride?: number;
+	roomNameOverride?: string;
 	timeoutMs?: number;
 	logFn?: (entry: ApiLogEntry) => void;
 	autoStampToday?: boolean;
@@ -139,6 +140,7 @@ export async function createCaseSummary({
 	caseSummary,
 	patientResponse,
 	roomIdOverride,
+	roomNameOverride,
 	timeoutMs = 30000,
 	logFn,
 	autoStampToday = true,
@@ -152,7 +154,16 @@ export async function createCaseSummary({
 		? merge<ICaseSummary>(template, caseSummary, { arrayMerge: mergeArraysPreferSource })
 		: JSON.parse(JSON.stringify(template));
 	applyCreatePatientResponse(payload, patientResponse);
+	// apply room id/name overrides
 	if (roomIdOverride !== undefined) payload.roomId = roomIdOverride;
+	// prefer explicit override, then patientResponse.roomName, then template
+	if (typeof roomNameOverride === 'string' && roomNameOverride.trim() !== '') {
+		payload.roomName = roomNameOverride;
+	} else if (patientResponse && typeof (patientResponse as any).roomName === 'string' && (patientResponse as any).roomName.trim() !== '') {
+		payload.roomName = (patientResponse as any).roomName;
+	}
+
+	// no appointment type overrides here (reverted)
 	if (autoStampToday) payload.today = new Date().toISOString();
 	// tighten procedure mapping
 	if (Array.isArray(payload.caseProcedures) && payload.caseProcedures.length) {

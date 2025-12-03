@@ -4,7 +4,7 @@ import { loginUser, logoutUser } from './auth';
 import { setGlobalApiLogger } from '../src/utils/api';
 import { postJson } from '../src/utils/api';
 import { createBasicPatients } from '../src/services/patient.service';
-import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID } from '../src/services/support.service';
+import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID, getFeeSchedules } from '../src/services/support.service';
 
 const app = express();
 app.use(express.json());
@@ -87,6 +87,8 @@ app.post('/seed', (req, res) => {
 					count: Number(opts.count) || 1,
 					concurrency: opts.concurrency,
 					facilityId: opts.facilityId,
+					roomIdOverride: opts.roomId,
+					roomNameOverride: opts.roomName,
 					logFn: logger,
 					extraHeaders,
 					username: opts.username,
@@ -144,8 +146,18 @@ app.post('/support-data', async (req, res) => {
 					try { console.log('[support-data] physicians fetched, count=', Array.isArray(physicians) ? physicians.length : 'obj'); } catch (e) {}
 				} catch (e: any) { console.error('[support-data] getPhysicianNameAndID error', e && e.message ? e.message : e); }
 
-				try { console.log('[support-data] captured logs:', logs.length); if (logs.length) console.log('[support-data] sample log:', logs[0]); } catch (e) {}
-				return res.json({ ok: true, rooms, appointmentTypes, physicians, logs });
+					try {
+						// Fetch fee schedules (CPT catalog) so UI can populate CPT dropdown
+						const feeSchedule = await getFeeSchedules(token as any, apiUrl);
+						try { console.log('[support-data] feeSchedule fetched, count=', Array.isArray(feeSchedule) ? feeSchedule.length : 'obj'); } catch (e) {}
+						// attach to response container
+						(physicians as any).__feeSchedule = feeSchedule; // keep local reference (not used elsewhere)
+					} catch (e: any) { console.error('[support-data] getFeeSchedules error', e && e.message ? e.message : e); }
+
+					try { console.log('[support-data] captured logs:', logs.length); if (logs.length) console.log('[support-data] sample log:', logs[0]); } catch (e) {}
+					// include feeSchedule if available (stored on physicians.__feeSchedule above)
+					const feeSchedule = (physicians as any && (physicians as any).__feeSchedule) ? (physicians as any).__feeSchedule : undefined;
+					return res.json({ ok: true, rooms, appointmentTypes, physicians, feeSchedule, logs });
 			} finally {
 				try { setGlobalApiLogger(undefined); } catch (e) {}
 			}

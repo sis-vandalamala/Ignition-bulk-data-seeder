@@ -89,7 +89,31 @@ export async function getPhysicianNameAndID(token: string, apiBaseUrl?: string, 
     return res;
 }
 
+export async function getFeeSchedules(token: string, apiBaseUrl?: string, extraHeaders?: Record<string,string>) {
+    if (!apiBaseUrl) throw new Error('apiBaseUrl is required for getFeeSchedules');
+    const base = String(apiBaseUrl).replace(/\/+$/, '');
+    const url = `${base}/api/FeeSchedule/GetFeeSchedules/`;
+    const defaultHeaders: Record<string,string> = Object.assign({
+        Accept: 'text/json',
+        priority: 'u=1, i',
+        token,
+        Referer: base + '/',
+    }, extraHeaders || {});
+
+    // Try shared getJson first for logging
+    try {
+        const res = await getJson(url, 15000, defaultHeaders as any);
+        try { const first = Array.isArray(res) ? res[0] : res; console.log('[getFeeSchedules] response:', first); } catch (e) {}
+        return res;
+    } catch (err) {
+        // fallback to axios for more control
+        const axiosRes = await axios.get(url, { headers: defaultHeaders, timeout: 15000, responseType: 'json' });
+        return axiosRes.data;
+    }
+}
+
 export default {
     requestRecordLock,
     releaseRecordLock,
+    getFeeSchedules,
 };

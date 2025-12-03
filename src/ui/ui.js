@@ -19,6 +19,7 @@
   const apptTypeSelect = $('apptTypeSelect');
   const physicianSelect = $('physicianSelect');
   const cptSelect = $('cptSelect');
+  // in-list floating search will be created dynamically on focus/click
   const runBtn = $('runBtn');
   const logoEl = document.querySelector('.logo');
   const pwdToggle = document.getElementById('pwdToggle');
@@ -67,6 +68,11 @@
   updateFlowDepthLabel();
 
   let token = null;
+  // cached option data for search filtering
+  let _cachedRooms = null;
+  let _cachedAppts = null;
+  let _cachedPhysicians = null;
+  let _cachedCPTs = null;
   const logEl = document.getElementById('logCard');
   const logTableBody = document.getElementById('logTableBody');
   const logFilter = document.getElementById('logFilter');
@@ -102,6 +108,173 @@
     } catch (e) { return new Date().toISOString().slice(11,19); }
   }
 
+  function makeOptionsFromRows(rows, makeLabel, makeValue) {
+    if (!Array.isArray(rows)) return '';
+    return rows.map(r => {
+      try {
+        const val = makeValue(r);
+        const label = makeLabel(r);
+        return `<option value="${val}">${label}</option>`;
+      } catch (e) { return '' }
+    }).join('');
+  }
+
+  function filterSelectBySearch(searchEl, selectEl, cachedRows, makeLabel, makeValue) {
+    if (!selectEl) return;
+    const q = (searchEl && searchEl.value) ? String(searchEl.value).toLowerCase().trim() : '';
+    if (!q) {
+      // restore original
+      selectEl.innerHTML = makeOptionsFromRows(cachedRows || Array.from(selectEl._originalOptions || []), makeLabel, makeValue);
+      if (selectEl.options && selectEl.options.length) selectEl.selectedIndex = 0;
+      return;
+    }
+    const source = Array.isArray(cachedRows) ? cachedRows : (Array.isArray(selectEl._originalOptions) ? selectEl._originalOptions : []);
+    const filtered = (source || []).filter(r => {
+      try {
+        const label = String(makeLabel(r) || '').toLowerCase();
+        const val = String(makeValue(r) || '').toLowerCase();
+        return label.includes(q) || val.includes(q);
+      } catch (e) { return false }
+    });
+    selectEl.innerHTML = makeOptionsFromRows(filtered, makeLabel, makeValue);
+    if (selectEl.options && selectEl.options.length) selectEl.selectedIndex = 0;
+  }
+
+  // Create a custom dropdown that embeds a search input as the first element inside the dropdown panel.
+  // This replaces the native select UI visually but keeps the native select element (hidden) for form values.
+  function createCustomDropdown(selectEl, cachedRowsGetter, makeLabel, makeValue) {
+    if (!selectEl) return;
+    // hide native select visually
+    selectEl.style.display = 'none';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'custom-select-wrapper';
+    wrapper.style.display = 'inline-block';
+    wrapper.style.position = 'relative';
+    wrapper.style.minWidth = (selectEl.offsetWidth || 180) + 'px';
+
+    const display = document.createElement('div');
+    display.className = 'cs-selected';
+    display.tabIndex = 0;
+    display.style.padding = '8px 10px';
+    display.style.border = '1px solid rgba(15,23,42,0.06)';
+    display.style.borderRadius = '8px';
+    display.style.background = 'var(--input)';
+    display.style.cursor = 'pointer';
+    display.style.minWidth = '160px';
+    display.style.boxSizing = 'border-box';
+    display.textContent = (selectEl.selectedOptions && selectEl.selectedOptions[0]) ? selectEl.selectedOptions[0].textContent : 'Select...';
+
+    const panel = document.createElement('div');
+    panel.className = 'cs-panel';
+    panel.style.position = 'absolute';
+    panel.style.left = '0';
+    panel.style.top = 'calc(100% + 6px)';
+    panel.style.zIndex = 999;
+    panel.style.background = 'white';
+    panel.style.border = '1px solid rgba(15,23,42,0.06)';
+    panel.style.borderRadius = '8px';
+    panel.style.boxShadow = '0 6px 18px rgba(15,23,42,0.06)';
+    panel.style.padding = '8px';
+    panel.style.display = 'none';
+    panel.style.width = Math.max(200, selectEl.offsetWidth || 220) + 'px';
+
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.placeholder = 'Type to filter...';
+    search.style.width = '100%';
+    search.style.padding = '6px 8px';
+    search.style.marginBottom = '6px';
+    search.style.boxSizing = 'border-box';
+
+    const list = document.createElement('div');
+    list.style.maxHeight = '220px';
+    list.style.overflow = 'auto';
+    list.style.width = '100%';
+
+    panel.appendChild(search);
+    panel.appendChild(list);
+    wrapper.appendChild(display);
+    wrapper.appendChild(panel);
+    selectEl.parentNode.insertBefore(wrapper, selectEl.nextSibling);
+
+    function buildList(rows) {
+      list.innerHTML = '';
+      if (!Array.isArray(rows) || rows.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.padding = '8px';
+        empty.style.color = 'var(--muted)';
+        empty.textContent = 'No options';
+        list.appendChild(empty);
+        return;
+      }
+      rows.forEach(r => {
+        const item = document.createElement('div');
+        item.style.padding = '6px 8px';
+        item.style.cursor = 'pointer';
+        item.style.borderRadius = '6px';
+        item.style.whiteSpace = 'nowrap';
+        item.style.overflow = 'hidden';
+        item.style.textOverflow = 'ellipsis';
+        const label = String(makeLabel(r) || '');
+        const val = String(makeValue(r) || '');
+        item.textContent = label;
+        item.dataset.value = val;
+        item.dataset.label = label;
+        item.addEventListener('click', () => {
+          try {
+            // ensure native select has this option so selectedOptions/textContent work later
+            let opt = Array.from(selectEl.options || []).find(o => String(o.value) === String(val));
+            if (!opt) {
+              opt = new Option(label, val);
+              try { selectEl.add(opt); } catch (e) { /* ignore */ }
+            }
+            try { selectEl.value = val; } catch (e) {}
+          } catch (e) {}
+          display.textContent = label;
+          const ev = new Event('change', { bubbles: true });
+          try { selectEl.dispatchEvent(ev); } catch (e) {}
+          panel.style.display = 'none';
+        });
+        item.addEventListener('mouseover', () => { item.style.background = '#f3f4f6'; });
+        item.addEventListener('mouseout', () => { item.style.background = 'transparent'; });
+        list.appendChild(item);
+      });
+    }
+
+    function refresh() {
+      const rows = (cachedRowsGetter && typeof cachedRowsGetter === 'function') ? cachedRowsGetter() : [];
+      buildList(Array.isArray(rows) ? rows : (selectEl._originalOptions || []));
+      // sync visible display with native select if possible
+      try {
+        const so = (selectEl && selectEl.selectedOptions && selectEl.selectedOptions[0]);
+        if (so && so.textContent) display.textContent = so.textContent;
+      } catch (e) {}
+    }
+
+    display.addEventListener('click', () => { panel.style.display = (panel.style.display === 'none') ? 'block' : 'none'; search.focus(); });
+    display.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); panel.style.display = 'block'; search.focus(); } });
+    search.addEventListener('input', () => {
+      const q = String(search.value || '').toLowerCase().trim();
+      const rows = (cachedRowsGetter && typeof cachedRowsGetter === 'function') ? cachedRowsGetter() : (selectEl._originalOptions || []);
+      if (!q) return buildList(rows || []);
+      const filtered = (rows || []).filter(r => {
+        try { const lab = String(makeLabel(r) || '').toLowerCase(); const val = String(makeValue(r) || '').toLowerCase(); return lab.includes(q) || val.includes(q); } catch (e) { return false }
+      });
+      buildList(filtered);
+    });
+
+    document.addEventListener('click', (e) => { if (!wrapper.contains(e.target)) panel.style.display = 'none'; });
+
+    selectEl._custom = { wrapper, display, panel, refresh };
+    refresh();
+  }
+
+  // create custom dropdowns for each select so the search input appears inside the list panel
+  createCustomDropdown(roomSelect, () => _cachedRooms, r => (r.name ?? r.roomName ?? r.RoomName ?? r.displayName ?? JSON.stringify(r)), r => (r.roomId ?? r.RoomId ?? r.roomID ?? r.id ?? ''));
+  createCustomDropdown(apptTypeSelect, () => _cachedAppts, a => (a.appointment_Type_Desc ?? a.appTypeDesc ?? a.description ?? a.name ?? JSON.stringify(a)), a => (a.appointmentTypeId ?? a.AppointmentTypeId ?? a.appointmentTypeID ?? a.id ?? ''));
+  createCustomDropdown(physicianSelect, () => _cachedPhysicians, p => ((p.fullName ?? p.FullName ?? p.name) || `${p.firstName || ''} ${p.lastName || ''}`.trim() || JSON.stringify(p)), p => (p.personId ?? p.PersonId ?? p.id ?? ''));
+  createCustomDropdown(cptSelect, () => _cachedCPTs, fs => (fs?.cptProcedure?.cptCode ?? fs?.cptCode ?? fs?.code ?? ''), fs => (fs?.cptProcedure?.cptProcedureId ?? fs?.cptProcedureId ?? fs?.id ?? ''));
+
   function log(msg){ /* deprecated: keep for rare notes, but do not add to table to avoid noise */ }
 
   if (logFilter) logFilter.addEventListener('input', renderTable);
@@ -131,6 +304,8 @@
       // populate selects from returned support data if present
       try {
         if (j.rooms && Array.isArray(j.rooms) && roomSelect) {
+          _cachedRooms = j.rooms.slice();
+          roomSelect._originalOptions = j.rooms.slice();
           roomSelect.innerHTML = j.rooms.map(r => {
             const value = r.roomId ?? r.RoomId ?? r.roomID ?? r.id ?? '';
             const label = r.name ?? r.roomName ?? r.RoomName ?? r.displayName ?? JSON.stringify(r);
@@ -138,16 +313,22 @@
           }).join('');
           // select first available
           if (roomSelect.options && roomSelect.options.length) roomSelect.selectedIndex = 0;
+            try { if (roomSelect && roomSelect._custom && typeof roomSelect._custom.refresh === 'function') roomSelect._custom.refresh(); } catch (e) {}
         }
         if (j.appointmentTypes && Array.isArray(j.appointmentTypes) && apptTypeSelect) {
+          _cachedAppts = j.appointmentTypes.slice();
+          apptTypeSelect._originalOptions = j.appointmentTypes.slice();
           apptTypeSelect.innerHTML = j.appointmentTypes.map(a => {
             const value = a.appointmentTypeId ?? a.AppointmentTypeId ?? a.appointmentTypeID ?? a.id ?? '';
             const label = a.appointment_Type_Desc ?? a.appTypeDesc ?? a.description ?? a.name ?? JSON.stringify(a);
             return `<option value="${value}">${label}</option>`;
           }).join('');
           if (apptTypeSelect.options && apptTypeSelect.options.length) apptTypeSelect.selectedIndex = 0;
+            try { if (apptTypeSelect && apptTypeSelect._custom && typeof apptTypeSelect._custom.refresh === 'function') apptTypeSelect._custom.refresh(); } catch (e) {}
         }
         if (j.physicians && Array.isArray(j.physicians) && physicianSelect) {
+          _cachedPhysicians = j.physicians.slice();
+          physicianSelect._originalOptions = j.physicians.slice();
           physicianSelect.innerHTML = j.physicians.map(p => {
             const value = p.personId ?? p.PersonId ?? p.id ?? '';
             const computedName = `${p.firstName || ''} ${p.lastName || ''}`.trim();
@@ -155,6 +336,7 @@
             return `<option value="${value}">${label}</option>`;
           }).join('');
           if (physicianSelect.options && physicianSelect.options.length) physicianSelect.selectedIndex = 0;
+            try { if (physicianSelect && physicianSelect._custom && typeof physicianSelect._custom.refresh === 'function') physicianSelect._custom.refresh(); } catch (e) {}
         }
       } catch (e) { log('populate selects error'); }
       // Immediately fetch support data after login and populate dropdowns
@@ -169,22 +351,30 @@
           // omit verbose support first-item logs
           try {
             if (sup.rooms && Array.isArray(sup.rooms) && roomSelect) {
+              _cachedRooms = sup.rooms.slice();
+              roomSelect._originalOptions = sup.rooms.slice();
               roomSelect.innerHTML = sup.rooms.map(r => {
                 const value = r.roomId ?? r.RoomId ?? r.roomID ?? r.id ?? '';
                 const label = r.name ?? r.roomName ?? r.RoomName ?? r.displayName ?? JSON.stringify(r);
                 return `<option value="${value}">${label}</option>`;
               }).join('');
               if (roomSelect.options && roomSelect.options.length) roomSelect.selectedIndex = 0;
+              try { if (roomSelect && roomSelect._custom && typeof roomSelect._custom.refresh === 'function') roomSelect._custom.refresh(); } catch (e) {}
             }
             if (sup.appointmentTypes && Array.isArray(sup.appointmentTypes) && apptTypeSelect) {
+              _cachedAppts = sup.appointmentTypes.slice();
+              apptTypeSelect._originalOptions = sup.appointmentTypes.slice();
               apptTypeSelect.innerHTML = sup.appointmentTypes.map(a => {
                 const value = a.appointmentTypeId ?? a.AppointmentTypeId ?? a.appointmentTypeID ?? a.id ?? '';
                 const label = a.appointment_Type_Desc ?? a.appTypeDesc ?? a.description ?? a.name ?? JSON.stringify(a);
                 return `<option value="${value}">${label}</option>`;
               }).join('');
               if (apptTypeSelect.options && apptTypeSelect.options.length) apptTypeSelect.selectedIndex = 0;
+              try { if (apptTypeSelect && apptTypeSelect._custom && typeof apptTypeSelect._custom.refresh === 'function') apptTypeSelect._custom.refresh(); } catch (e) {}
             }
             if (sup.physicians && Array.isArray(sup.physicians) && physicianSelect) {
+              _cachedPhysicians = sup.physicians.slice();
+              physicianSelect._originalOptions = sup.physicians.slice();
               physicianSelect.innerHTML = sup.physicians.map(p => {
                 const value = p.personId ?? p.PersonId ?? p.id ?? '';
                 const computedName = `${p.firstName || ''} ${p.lastName || ''}`.trim();
@@ -192,16 +382,19 @@
                 return `<option value="${value}">${label}</option>`;
               }).join('');
               if (physicianSelect.options && physicianSelect.options.length) physicianSelect.selectedIndex = 0;
+              try { if (physicianSelect && physicianSelect._custom && typeof physicianSelect._custom.refresh === 'function') physicianSelect._custom.refresh(); } catch (e) {}
             }
             if (sup.feeSchedule && Array.isArray(sup.feeSchedule) && cptSelect) {
+              _cachedCPTs = sup.feeSchedule.slice();
+              cptSelect._originalOptions = sup.feeSchedule.slice();
               cptSelect.innerHTML = sup.feeSchedule.map(fs => {
                 const val = fs?.cptProcedure?.cptProcedureId ?? fs?.cptProcedureId ?? fs?.id ?? '';
                 const code = fs?.cptProcedure?.cptCode ?? fs?.cptCode ?? fs?.code ?? '';
-                const desc = fs?.cptProcedure?.cptDescription ?? fs?.cptDescription ?? fs?.description ?? '';
-                const label = [code, desc].filter(Boolean).join(' - ') || JSON.stringify(fs);
+                const label = code || (fs && JSON.stringify(fs)) || '';
                 return `<option value="${val}">${label}</option>`;
               }).join('');
               if (cptSelect.options && cptSelect.options.length) cptSelect.selectedIndex = 0;
+                try { if (cptSelect && cptSelect._custom && typeof cptSelect._custom.refresh === 'function') cptSelect._custom.refresh(); } catch (e) {}
             }
           } catch (e) { /* ignore populate support selects error */ }
           try {
