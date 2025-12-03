@@ -119,6 +119,8 @@ export type CreateCaseSummaryOptions = {
 	patientResponse?: CreatePatientResult;
 	roomIdOverride?: number;
 	roomNameOverride?: string;
+	appointmentTypeIdOverride?: number;
+	appointmentTypeNameOverride?: string;
 	timeoutMs?: number;
 	logFn?: (entry: ApiLogEntry) => void;
 	autoStampToday?: boolean;
@@ -141,6 +143,8 @@ export async function createCaseSummary({
 	patientResponse,
 	roomIdOverride,
 	roomNameOverride,
+	appointmentTypeIdOverride,
+	appointmentTypeNameOverride,
 	timeoutMs = 30000,
 	logFn,
 	autoStampToday = true,
@@ -161,6 +165,17 @@ export async function createCaseSummary({
 		payload.roomName = roomNameOverride;
 	} else if (patientResponse && typeof (patientResponse as any).roomName === 'string' && (patientResponse as any).roomName.trim() !== '') {
 		payload.roomName = (patientResponse as any).roomName;
+	}
+
+	// apply appointment type id/name overrides (similar to room logic)
+	// Only apply appointment type name if we have an ID override
+	if (appointmentTypeIdOverride !== undefined) {
+		payload.appointmentTypeId = appointmentTypeIdOverride as any;
+		if (typeof appointmentTypeNameOverride === 'string' && appointmentTypeNameOverride.trim() !== '') {
+			(payload as any).appointmentTypeName = appointmentTypeNameOverride;
+		} else if (patientResponse && typeof (patientResponse as any).appointmentTypeName === 'string' && (patientResponse as any).appointmentTypeName.trim() !== '') {
+			(payload as any).appointmentTypeName = (patientResponse as any).appointmentTypeName;
+		}
 	}
 
 	// no appointment type overrides here (reverted)

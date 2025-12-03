@@ -80,6 +80,8 @@ app.post('/seed', (req, res) => {
 					const v = (incoming as any)[k];
 					if (v) extraHeaders[k] = Array.isArray(v) ? v[0] : String(v);
 				});
+				// Only forward appointment type overrides if an ID is present
+				const hasApptId = typeof opts.appointmentTypeId === 'number' && !Number.isNaN(opts.appointmentTypeId);
 				const svcRes = await createBasicPatients({
 					apiBaseUrl: opts.apiUrl || opts.url,
 					token,
@@ -89,6 +91,8 @@ app.post('/seed', (req, res) => {
 					facilityId: opts.facilityId,
 					roomIdOverride: opts.roomId,
 					roomNameOverride: opts.roomName,
+					appointmentTypeIdOverride: hasApptId ? opts.appointmentTypeId : undefined,
+					appointmentTypeNameOverride: hasApptId ? opts.appointmentTypeName : undefined,
 					logFn: logger,
 					extraHeaders,
 					username: opts.username,

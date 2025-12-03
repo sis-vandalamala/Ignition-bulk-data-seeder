@@ -89,6 +89,8 @@ export type CreateBasicPatientsOptions = {
 	facilityId?: number;
 	roomIdOverride?: number;
 	roomNameOverride?: string;
+	appointmentTypeIdOverride?: number;
+	appointmentTypeNameOverride?: string;
 	logFn?: (entry: ApiLogEntry) => void;
 	username?: string;
 	extraHeaders?: Record<string, string>;
@@ -235,6 +237,8 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 								patientResponse: patientSource,
 								roomIdOverride: (patientSource && (patientSource.roomId || patientSource.roomId === 0)) ? (patientSource.roomId as number) : (opts.roomIdOverride === undefined ? undefined : opts.roomIdOverride),
 								roomNameOverride: (patientSource && patientSource.roomName) ? (patientSource.roomName as string) : (opts.roomNameOverride === undefined ? undefined : opts.roomNameOverride),
+								appointmentTypeIdOverride: (patientSource && (patientSource.appointmentTypeId || patientSource.appointmentTypeId === 0)) ? (patientSource.appointmentTypeId as number) : (opts.appointmentTypeIdOverride === undefined ? undefined : opts.appointmentTypeIdOverride),
+								appointmentTypeNameOverride: (patientSource && patientSource.appointmentTypeName) ? (patientSource.appointmentTypeName as string) : (opts.appointmentTypeNameOverride === undefined ? undefined : opts.appointmentTypeNameOverride),
 								logFn,
 							});
 									outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: cs } as any;
