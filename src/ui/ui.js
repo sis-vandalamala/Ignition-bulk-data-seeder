@@ -495,6 +495,17 @@
       const parts = String(selCptLabel).split(' - ');
       return parts[0] && parts[0].trim() ? parts[0].trim() : undefined;
     })();
+    const selFeeSchedule = (() => {
+      try {
+        const id = selCptProcedureId;
+        if (!id || !_cachedCPTs) return undefined;
+        const match = (_cachedCPTs || []).find(fs => {
+          const pid = fs?.cptProcedure?.cptProcedureId ?? fs?.cptProcedureId ?? fs?.id;
+          return Number(pid) === Number(id);
+        });
+        return match ? match : undefined;
+      } catch (e) { return undefined; }
+    })();
 
     const payload = {
       opts: {
@@ -515,6 +526,7 @@
         , physician: selPhysicianName
         , cptProcedureId: selCptProcedureId
         , cptCode: selCptCode
+        , feeScheduleOverride: selFeeSchedule
         , flowDepth: flowDepth ? Number(flowDepth.value) : 3
       }
     };

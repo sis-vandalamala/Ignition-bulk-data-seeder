@@ -123,6 +123,44 @@ export type CreateCaseSummaryOptions = {
 	appointmentTypeNameOverride?: string;
 	physicianIdOverride?: number;
 	physicianNameOverride?: string;
+	// Map CPT data dynamically from a FeeSchedule response
+	feeScheduleOverride?: {
+		feeScheduleId: number;
+		procedure: string;
+		organizationId: number;
+		cptProcedureId: number;
+		cptProcedure: {
+			cptProcedureId: number;
+			cptCode: string;
+			cptDescription: string;
+			isHcpcsCode: boolean;
+			isCdtCode: boolean;
+			isCustomCode: boolean;
+			sourceIdentifier: string;
+		};
+		modifiedProcedureDescription?: string;
+		status?: string;
+		amount?: number;
+		effectiveDate?: string;
+		feeScheduleHistoryId?: number;
+		feeScheduleRootId?: number;
+		activeTf?: boolean;
+		isIncludeStateReportTf?: boolean;
+		revenueCodeId?: number;
+		typeOfBill?: string;
+		itemSource?: number;
+		generalLedgerToDebitId?: number | null;
+		generalLedgerToCreditId?: number | null;
+		enterpriseGeneralLedgerToCreditId?: number | null;
+		enterpriseGeneralLedgerToDebitId?: number | null;
+		isQualityIndicator?: boolean;
+		procedureSpecialtyId?: number | null;
+		mappedAnesthesiaCptCode?: string | null;
+		asaBaseUnits?: number | null;
+		cmsBaseUnits?: number | null;
+		sourceIdentifier?: string;
+		procedureDisplayName?: string;
+	};
 	timeoutMs?: number;
 	logFn?: (entry: ApiLogEntry) => void;
 	autoStampToday?: boolean;
@@ -149,6 +187,7 @@ export async function createCaseSummary({
 	appointmentTypeNameOverride,
 	physicianIdOverride,
 	physicianNameOverride,
+	feeScheduleOverride,
 	timeoutMs = 30000,
 	logFn,
 	autoStampToday = true,
@@ -200,6 +239,64 @@ export async function createCaseSummary({
 				return p;
 			});
 		}
+	}
+
+	// apply CPT/FeeSchedule overrides to caseProcedures (first entry by default)
+	if (feeScheduleOverride && Array.isArray(payload.caseProcedures) && payload.caseProcedures.length) {
+		const fsItem = feeScheduleOverride;
+		payload.caseProcedures = payload.caseProcedures.map((cp: any, idx: number) => {
+			if (idx !== 0) return cp; // apply to primary/first by default
+			const updated = { ...cp };
+			// direct CPT fields
+			updated.cptCode = fsItem.cptProcedure?.cptCode ?? updated.cptCode;
+			updated.procedureDescription = fsItem.procedure ?? updated.procedureDescription;
+			updated.modifiedProcedureDescription = fsItem.modifiedProcedureDescription ?? `${fsItem.cptProcedure?.cptCode ?? ''}; ${fsItem.procedure}`.trim();
+			updated.procedureDisplayName = fsItem.procedureDisplayName ?? `${fsItem.cptProcedure?.cptCode ?? ''}; ${fsItem.procedure}`.trim();
+			// top-level feeSchedule references (keep in sync with nested feeScheduleItem)
+			updated.feeScheduleId = fsItem.feeScheduleId ?? updated.feeScheduleId;
+			updated.feeScheduleHistoryId = fsItem.feeScheduleHistoryId ?? updated.feeScheduleHistoryId ?? (fsItem.feeScheduleHistoryId ?? undefined);
+			updated.feeScheduleRootId = fsItem.feeScheduleRootId ?? updated.feeScheduleRootId;
+			// keep physician fields as-is; only CPT mapping changes
+			// attach feeScheduleItem in expected structure
+			updated.feeScheduleItem = {
+				feeScheduleId: fsItem.feeScheduleId,
+				procedure: fsItem.procedure,
+				organizationId: fsItem.organizationId,
+				cptProcedureId: fsItem.cptProcedureId,
+				cptProcedure: {
+					cptProcedureId: fsItem.cptProcedure.cptProcedureId,
+					cptCode: fsItem.cptProcedure.cptCode,
+					cptDescription: fsItem.cptProcedure.cptDescription,
+					isHcpcsCode: fsItem.cptProcedure.isHcpcsCode,
+					isCdtCode: fsItem.cptProcedure.isCdtCode,
+					isCustomCode: fsItem.cptProcedure.isCustomCode,
+					sourceIdentifier: fsItem.cptProcedure.sourceIdentifier,
+				},
+				modifiedProcedureDescription: fsItem.modifiedProcedureDescription ?? `${fsItem.cptProcedure?.cptCode ?? ''}; ${fsItem.procedure}`.trim(),
+				status: fsItem.status ?? 'Billable',
+				amount: fsItem.amount ?? updated.feeScheduleItem?.amount ?? undefined,
+				effectiveDate: fsItem.effectiveDate ?? updated.feeScheduleItem?.effectiveDate ?? undefined,
+				feeScheduleHistoryId: fsItem.feeScheduleHistoryId ?? updated.feeScheduleItem?.feeScheduleHistoryId ?? undefined,
+				feeScheduleRootId: fsItem.feeScheduleRootId ?? updated.feeScheduleItem?.feeScheduleRootId ?? undefined,
+				activeTf: fsItem.activeTf ?? true,
+				isIncludeStateReportTf: fsItem.isIncludeStateReportTf ?? true,
+				revenueCodeId: fsItem.revenueCodeId ?? updated.feeScheduleItem?.revenueCodeId ?? undefined,
+				typeOfBill: fsItem.typeOfBill ?? updated.feeScheduleItem?.typeOfBill ?? undefined,
+				itemSource: fsItem.itemSource ?? updated.feeScheduleItem?.itemSource ?? 1,
+				generalLedgerToDebitId: fsItem.generalLedgerToDebitId ?? null,
+				generalLedgerToCreditId: fsItem.generalLedgerToCreditId ?? null,
+				enterpriseGeneralLedgerToCreditId: fsItem.enterpriseGeneralLedgerToCreditId ?? null,
+				enterpriseGeneralLedgerToDebitId: fsItem.enterpriseGeneralLedgerToDebitId ?? null,
+				isQualityIndicator: fsItem.isQualityIndicator ?? false,
+				procedureSpecialtyId: fsItem.procedureSpecialtyId ?? null,
+				mappedAnesthesiaCptCode: fsItem.mappedAnesthesiaCptCode ?? null,
+				asaBaseUnits: fsItem.asaBaseUnits ?? null,
+				cmsBaseUnits: fsItem.cmsBaseUnits ?? null,
+				sourceIdentifier: fsItem.sourceIdentifier ?? '00000000-0000-0000-0000-000000000000',
+				procedureDisplayName: fsItem.procedureDisplayName ?? `${fsItem.cptProcedure?.cptCode ?? ''}; ${fsItem.procedure}`.trim(),
+			};
+			return updated;
+		});
 	}
 
 	// no appointment type overrides here (reverted)
