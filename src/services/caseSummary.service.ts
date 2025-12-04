@@ -121,6 +121,8 @@ export type CreateCaseSummaryOptions = {
 	roomNameOverride?: string;
 	appointmentTypeIdOverride?: number;
 	appointmentTypeNameOverride?: string;
+	physicianIdOverride?: number;
+	physicianNameOverride?: string;
 	timeoutMs?: number;
 	logFn?: (entry: ApiLogEntry) => void;
 	autoStampToday?: boolean;
@@ -145,6 +147,8 @@ export async function createCaseSummary({
 	roomNameOverride,
 	appointmentTypeIdOverride,
 	appointmentTypeNameOverride,
+	physicianIdOverride,
+	physicianNameOverride,
 	timeoutMs = 30000,
 	logFn,
 	autoStampToday = true,
@@ -175,6 +179,26 @@ export async function createCaseSummary({
 			(payload as any).appointmentTypeName = appointmentTypeNameOverride;
 		} else if (patientResponse && typeof (patientResponse as any).appointmentTypeName === 'string' && (patientResponse as any).appointmentTypeName.trim() !== '') {
 			(payload as any).appointmentTypeName = (patientResponse as any).appointmentTypeName;
+		}
+	}
+
+	// apply physician overrides: set primaryPhysicianId and update all caseProcedures physician fields
+	if (physicianIdOverride !== undefined) {
+		(payload as any).primaryPhysicianId = physicianIdOverride as any;
+		// set name if provided or pull from patientResponse
+		if (typeof physicianNameOverride === 'string' && physicianNameOverride.trim() !== '') {
+			(payload as any).primaryPhysician = physicianNameOverride;
+		} else if (patientResponse && typeof (patientResponse as any).primaryPhysician === 'string' && (patientResponse as any).primaryPhysician.trim() !== '') {
+			(payload as any).primaryPhysician = (patientResponse as any).primaryPhysician;
+		}
+		// update each caseProcedure physicianId/name to match override
+		if (Array.isArray(payload.caseProcedures)) {
+			payload.caseProcedures = payload.caseProcedures.map((cp: any) => {
+				const p = { ...cp };
+				p.physicianId = physicianIdOverride as any;
+				if (typeof physicianNameOverride === 'string' && physicianNameOverride.trim() !== '') p.physician = physicianNameOverride;
+				return p;
+			});
 		}
 	}
 

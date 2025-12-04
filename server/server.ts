@@ -82,6 +82,8 @@ app.post('/seed', (req, res) => {
 				});
 				// Only forward appointment type overrides if an ID is present
 				const hasApptId = typeof opts.appointmentTypeId === 'number' && !Number.isNaN(opts.appointmentTypeId);
+				// determine if physician override provided
+				const hasPhysId = typeof opts.physicianId === 'number' && !Number.isNaN(opts.physicianId);
 				const svcRes = await createBasicPatients({
 					apiBaseUrl: opts.apiUrl || opts.url,
 					token,
@@ -93,6 +95,8 @@ app.post('/seed', (req, res) => {
 					roomNameOverride: opts.roomName,
 					appointmentTypeIdOverride: hasApptId ? opts.appointmentTypeId : undefined,
 					appointmentTypeNameOverride: hasApptId ? opts.appointmentTypeName : undefined,
+				physicianIdOverride: hasPhysId ? opts.physicianId : undefined,
+				physicianNameOverride: hasPhysId ? opts.physician : undefined,
 					logFn: logger,
 					extraHeaders,
 					username: opts.username,
