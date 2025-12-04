@@ -94,6 +94,7 @@ export type CreateBasicPatientsOptions = {
 	physicianIdOverride?: number;
 	physicianNameOverride?: string;
 	feeScheduleOverride?: any; // FeeSchedule object to map CPT dynamically
+	dos?: string; // optional ISO date string for Date of Service
 	logFn?: (entry: ApiLogEntry) => void;
 	username?: string;
 	extraHeaders?: Record<string, string>;
@@ -245,6 +246,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 								physicianIdOverride: (patientSource && (patientSource.primaryPhysicianId || patientSource.primaryPhysicianId === 0)) ? (patientSource.primaryPhysicianId as number) : (opts.physicianIdOverride === undefined ? undefined : (opts as any).physicianIdOverride),
 								physicianNameOverride: (patientSource && patientSource.primaryPhysician) ? (patientSource.primaryPhysician as string) : ((opts as any).physicianNameOverride === undefined ? undefined : (opts as any).physicianNameOverride),
 								feeScheduleOverride: (opts as any).feeScheduleOverride,
+								dos: opts.dos,
 								logFn,
 							});
 									outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: cs } as any;

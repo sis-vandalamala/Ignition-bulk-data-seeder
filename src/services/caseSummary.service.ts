@@ -161,6 +161,7 @@ export type CreateCaseSummaryOptions = {
 		sourceIdentifier?: string;
 		procedureDisplayName?: string;
 	};
+	dos?: string; // optional Date of Service (ISO string)
 	timeoutMs?: number;
 	logFn?: (entry: ApiLogEntry) => void;
 	autoStampToday?: boolean;
@@ -189,9 +190,10 @@ export async function createCaseSummary({
 	physicianNameOverride,
 	feeScheduleOverride,
 	timeoutMs = 30000,
-	logFn,
-	autoStampToday = true,
-	procedureAdjustments,
+ 	logFn,
+ 	autoStampToday = true,
+ 	procedureAdjustments,
+ 	dos,
 }: CreateCaseSummaryOptions) {
 	if (!apiBaseUrl) throw new Error('apiBaseUrl is required');
 	if (!token) throw new Error('token is required');
@@ -238,6 +240,70 @@ export async function createCaseSummary({
 				if (typeof physicianNameOverride === 'string' && physicianNameOverride.trim() !== '') p.physician = physicianNameOverride;
 				return p;
 			});
+		}
+	}
+
+	// Map Date of Service (dos) into payload if provided. Expect ISO date string (YYYY-MM-DD or full ISO).
+	if (dos) {
+		try {
+			const rawDos = dos as string;
+			// accept full ISO or YYYY-MM-DD
+			let dosDate: Date | null = null;
+			if (/^\d{4}-\d{2}-\d{2}$/.test(rawDos)) {
+				dosDate = new Date(rawDos + 'T00:00:00Z');
+			} else {
+				const parsed = Date.parse(rawDos);
+				if (!Number.isNaN(parsed)) dosDate = new Date(parsed);
+			}
+			if (dosDate) {
+				// set payload.today to DOS ISO if DOS provided (matches template style)
+				payload.today = dosDate.toISOString();
+				// dateOfService in template is MM/DD/YYYY
+				const mm = String(dosDate.getUTCMonth() + 1).padStart(2, '0');
+				const dd = String(dosDate.getUTCDate()).padStart(2, '0');
+				const yyyy = String(dosDate.getUTCFullYear());
+				payload.dateOfService = `${mm}/${dd}/${yyyy}`;
+				// procedureDt and procedureStartDt/procedureStopDt: if template has times, preserve time-of-day but replace date portion
+				const replaceDatePortion = (orig: any, useStart = true) => {
+					if (!orig) return null;
+					try {
+						const d = new Date(orig);
+						if (Number.isNaN(d.getTime())) return null;
+						// create a new Date with DOS date but preserve time components from orig
+						const newD = new Date(Date.UTC(dosDate!.getUTCFullYear(), dosDate!.getUTCMonth(), dosDate!.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds()));
+						return newD.toISOString();
+					} catch (e) { return null; }
+				};
+				// if payload has procedureStartDt/StopDt, replace date portion
+				if (payload.procedureStartDt) {
+					const ps = replaceDatePortion(payload.procedureStartDt, true);
+					if (ps) payload.procedureStartDt = ps;
+				}
+				if (payload.procedureStopDt) {
+					const pe = replaceDatePortion(payload.procedureStopDt, false);
+					if (pe) payload.procedureStopDt = pe;
+				}
+				// procedureDt: usually full datetime — replace date portion
+				if (payload.procedureDt) {
+					const pd = replaceDatePortion(payload.procedureDt, true);
+					if (pd) payload.procedureDt = pd;
+				}
+				// procedureStartTime/procedureStopTime in template are ISO strings — ensure they match start/stop
+				if (payload.procedureStartDt) {
+					try {
+						const d = new Date(payload.procedureStartDt);
+						payload.procedureStartTime = d.toISOString();
+					} catch (e) {}
+				}
+				if (payload.procedureStopDt) {
+					try {
+						const d2 = new Date(payload.procedureStopDt);
+						payload.procedureStopTime = d2.toISOString();
+					} catch (e) {}
+				}
+			}
+		} catch (e) {
+			// ignore DOS mapping errors
 		}
 	}
 
@@ -311,7 +377,7 @@ export async function createCaseSummary({
 	}
 
 	// no appointment type overrides here (reverted)
-	if (autoStampToday) payload.today = new Date().toISOString();
+	if (autoStampToday && !dos) payload.today = new Date().toISOString();
 	// tighten procedure mapping
 	if (Array.isArray(payload.caseProcedures) && payload.caseProcedures.length) {
 		const opts = procedureAdjustments || {};

@@ -26,7 +26,7 @@
       .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
       label{font-size:13px;color:#111827}
       .field{display:flex;flex-direction:column;gap:6px}
-      input[type=text], input[type=password], input[type=url], input[type=number], select{background:var(--input);border:1px solid rgba(15,23,42,0.06);padding:10px 12px;border-radius:8px;font-size:14px;color:#0f172a}
+      input[type=text], input[type=password], input[type=url], input[type=number], input[type=date], select{background:var(--input);border:1px solid rgba(15,23,42,0.06);padding:10px 12px;border-radius:8px;font-size:14px;color:#0f172a}
 
       .muted{color:var(--muted);font-size:13px}
       .actions{margin-top:12px}
@@ -124,12 +124,20 @@
 
             <div class="card" id="supportCard" style="display:none">
         <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
-          <div style="width:180px">
-            <div class="field">
-              <label>Room</label>
-              <select id="roomSelect">
-                <option value="" disabled selected>Loading...</option>
-              </select>
+          <div style="display:flex;gap:12px;align-items:center">
+            <div style="width:140px">
+              <div class="field">
+                <label>Date of Service</label>
+                <input id="dos" type="date" title="dd-mm-yyyy" />
+              </div>
+            </div>
+            <div style="width:180px">
+              <div class="field">
+                <label>Room</label>
+                <select id="roomSelect">
+                  <option value="" disabled selected>Loading...</option>
+                </select>
+              </div>
             </div>
           </div>
           <div style="width:220px">

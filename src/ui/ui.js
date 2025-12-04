@@ -19,6 +19,17 @@
   const apptTypeSelect = $('apptTypeSelect');
   const physicianSelect = $('physicianSelect');
   const cptSelect = $('cptSelect');
+  const dosInput = $('dos');
+  // Bind default Date of Service to today's date (YYYY-MM-DD) if not already set
+  if (dosInput && !dosInput.value) {
+    try {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      dosInput.value = `${yyyy}-${mm}-${dd}`;
+    } catch (e) { /* ignore */ }
+  }
   // in-list floating search will be created dynamically on focus/click
   const runBtn = $('runBtn');
   const logoEl = document.querySelector('.logo');
@@ -626,6 +637,20 @@
     // Gather selected labels for room, appointment type, physician
     const selRoomId = roomSelect && roomSelect.value ? Number(roomSelect.value) : undefined;
     const selRoomName = (roomSelect && roomSelect.selectedOptions && roomSelect.selectedOptions[0]) ? roomSelect.selectedOptions[0].textContent : undefined;
+    // read DOS (YYYY-MM-DD from native input) and convert to ISO (UTC midnight)
+    const selDOS = (() => {
+      try {
+        if (!dosInput) return undefined;
+        const v = (dosInput.value || '').trim();
+        if (!v) return undefined;
+        const m = v.match(/^\s*(\d{4})-(\d{2})-(\d{2})\s*$/);
+        if (!m) return undefined;
+        const yyyy = Number(m[1]); const mm = Number(m[2]); const dd = Number(m[3]);
+        const d = new Date(Date.UTC(yyyy, mm - 1, dd, 0, 0, 0));
+        if (Number.isNaN(d.getTime())) return undefined;
+        return d.toISOString();
+      } catch (e) { return undefined; }
+    })();
     const selApptTypeId = apptTypeSelect && apptTypeSelect.value ? Number(apptTypeSelect.value) : undefined;
     const selApptTypeName = (apptTypeSelect && apptTypeSelect.selectedOptions && apptTypeSelect.selectedOptions[0]) ? apptTypeSelect.selectedOptions[0].textContent : undefined;
     const selPhysicianId = physicianSelect && physicianSelect.value ? Number(physicianSelect.value) : undefined;
@@ -664,6 +689,7 @@
         password: password.value
         , roomId: selRoomId
         , roomName: selRoomName
+        , dos: selDOS
         , appointmentTypeId: selApptTypeId
         , appointmentTypeName: selApptTypeName
         , physicianId: selPhysicianId

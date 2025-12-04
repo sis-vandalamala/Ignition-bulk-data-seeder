@@ -98,6 +98,7 @@ app.post('/seed', (req, res) => {
 				physicianIdOverride: hasPhysId ? opts.physicianId : undefined,
 				physicianNameOverride: hasPhysId ? opts.physician : undefined,
 				feeScheduleOverride: opts.feeScheduleOverride,
+				dos: opts.dos,
 					logFn: logger,
 					extraHeaders,
 					username: opts.username,
