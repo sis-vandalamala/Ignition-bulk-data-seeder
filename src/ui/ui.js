@@ -273,7 +273,149 @@
   createCustomDropdown(roomSelect, () => _cachedRooms, r => (r.name ?? r.roomName ?? r.RoomName ?? r.displayName ?? JSON.stringify(r)), r => (r.roomId ?? r.RoomId ?? r.roomID ?? r.id ?? ''));
   createCustomDropdown(apptTypeSelect, () => _cachedAppts, a => (a.appointment_Type_Desc ?? a.appTypeDesc ?? a.description ?? a.name ?? JSON.stringify(a)), a => (a.appointmentTypeId ?? a.AppointmentTypeId ?? a.appointmentTypeID ?? a.id ?? ''));
   createCustomDropdown(physicianSelect, () => _cachedPhysicians, p => ((p.fullName ?? p.FullName ?? p.name) || `${p.firstName || ''} ${p.lastName || ''}`.trim() || JSON.stringify(p)), p => (p.personId ?? p.PersonId ?? p.id ?? ''));
-  createCustomDropdown(cptSelect, () => _cachedCPTs, fs => (fs?.cptProcedure?.cptCode ?? fs?.cptCode ?? fs?.code ?? ''), fs => (fs?.cptProcedure?.cptProcedureId ?? fs?.cptProcedureId ?? fs?.id ?? ''));
+  // cptSelect is a native multi-select; do not create custom single-select dropdown for it
+  function createCustomMultiDropdown(selectEl, cachedRowsGetter, makeLabel, makeValue) {
+    if (!selectEl) return;
+    selectEl.style.display = 'none';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'custom-select-wrapper';
+    wrapper.style.display = 'inline-block';
+    wrapper.style.position = 'relative';
+    wrapper.style.minWidth = (selectEl.offsetWidth || 180) + 'px';
+
+    const display = document.createElement('div');
+    display.className = 'cs-selected';
+    display.tabIndex = 0;
+    display.style.padding = '8px 10px';
+    display.style.border = '1px solid rgba(15,23,42,0.06)';
+    display.style.borderRadius = '8px';
+    display.style.background = 'var(--input)';
+    display.style.cursor = 'pointer';
+    display.style.minWidth = '160px';
+    display.style.boxSizing = 'border-box';
+    display.textContent = (selectEl.selectedOptions && selectEl.selectedOptions.length ? `${selectEl.selectedOptions.length} selected` : 'Select...');
+
+    const panel = document.createElement('div');
+    panel.className = 'cs-panel';
+    panel.style.position = 'absolute';
+    panel.style.left = '0';
+    panel.style.top = 'calc(100% + 6px)';
+    panel.style.zIndex = 999;
+    panel.style.background = 'white';
+    panel.style.border = '1px solid rgba(15,23,42,0.06)';
+    panel.style.borderRadius = '8px';
+    panel.style.boxShadow = '0 6px 18px rgba(15,23,42,0.06)';
+    panel.style.padding = '8px';
+    panel.style.display = 'none';
+    panel.style.width = Math.max(300, selectEl.offsetWidth || 320) + 'px';
+
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.placeholder = 'Type to filter...';
+    search.style.width = '100%';
+    search.style.padding = '6px 8px';
+    search.style.marginBottom = '6px';
+    search.style.boxSizing = 'border-box';
+
+    const list = document.createElement('div');
+    list.style.maxHeight = '240px';
+    list.style.overflow = 'auto';
+    list.style.width = '100%';
+
+    panel.appendChild(search);
+    panel.appendChild(list);
+    wrapper.appendChild(display);
+    wrapper.appendChild(panel);
+    selectEl.parentNode.insertBefore(wrapper, selectEl.nextSibling);
+
+    function buildList(rows) {
+      list.innerHTML = '';
+      if (!Array.isArray(rows) || rows.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.padding = '8px';
+        empty.style.color = 'var(--muted)';
+        empty.textContent = 'No options';
+        list.appendChild(empty);
+        return;
+      }
+      rows.forEach(r => {
+        const id = String(makeValue(r) || '');
+        const label = String(makeLabel(r) || '');
+        const opt = Array.from(selectEl.options || []).find(o => String(o.value) === id);
+        if (!opt) {
+          try { selectEl.add(new Option(label, id)); } catch (e) { /* ignore */ }
+        }
+        const item = document.createElement('div');
+        item.style.padding = '6px 8px';
+        item.style.cursor = 'pointer';
+        item.style.borderRadius = '6px';
+        item.style.display = 'flex';
+        item.style.alignItems = 'center';
+        item.style.gap = '8px';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = id;
+        cb.checked = !!(Array.from(selectEl.options || []).find(o => String(o.value) === id && o.selected));
+        cb.addEventListener('change', (e) => {
+          try {
+            const o = Array.from(selectEl.options || []).find(o2 => String(o2.value) === id);
+            if (o) o.selected = cb.checked;
+            // update display text
+            const selCount = (selectEl.selectedOptions && selectEl.selectedOptions.length) ? selectEl.selectedOptions.length : 0;
+            display.textContent = selCount ? `${selCount} selected` : 'Select...';
+            const ev = new Event('change', { bubbles: true });
+            try { selectEl.dispatchEvent(ev); } catch (e) {}
+          } catch (e) {}
+        });
+        const span = document.createElement('div');
+        span.style.flex = '1';
+        span.style.whiteSpace = 'nowrap';
+        span.style.overflow = 'hidden';
+        span.style.textOverflow = 'ellipsis';
+        span.textContent = label;
+        item.appendChild(cb);
+        item.appendChild(span);
+        item.addEventListener('click', (ev) => {
+          // avoid double toggling when clicking checkbox
+          if (ev.target === cb) return;
+          cb.checked = !cb.checked;
+          cb.dispatchEvent(new Event('change'));
+        });
+        item.addEventListener('mouseover', () => { item.style.background = '#f3f4f6'; });
+        item.addEventListener('mouseout', () => { item.style.background = 'transparent'; });
+        list.appendChild(item);
+      });
+    }
+
+    function refresh() {
+      const rows = (cachedRowsGetter && typeof cachedRowsGetter === 'function') ? cachedRowsGetter() : [];
+      buildList(Array.isArray(rows) ? rows : (selectEl._originalOptions || []));
+      try {
+        const so = (selectEl && selectEl.selectedOptions && selectEl.selectedOptions[0]);
+        display.textContent = (selectEl.selectedOptions && selectEl.selectedOptions.length) ? `${selectEl.selectedOptions.length} selected` : (so && so.textContent ? so.textContent : 'Select...');
+      } catch (e) {}
+    }
+
+    display.addEventListener('click', () => { panel.style.display = (panel.style.display === 'none') ? 'block' : 'none'; search.focus(); });
+    display.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); panel.style.display = 'block'; search.focus(); } });
+    search.addEventListener('input', () => {
+      const q = String(search.value || '').toLowerCase().trim();
+      const rows = (cachedRowsGetter && typeof cachedRowsGetter === 'function') ? cachedRowsGetter() : (selectEl._originalOptions || []);
+      if (!q) return buildList(rows || []);
+      const filtered = (rows || []).filter(r => {
+        try { const lab = String(makeLabel(r) || '').toLowerCase(); const val = String(makeValue(r) || '').toLowerCase(); return lab.includes(q) || val.includes(q); } catch (e) { return false }
+      });
+      buildList(filtered);
+    });
+
+    document.addEventListener('click', (e) => { if (!wrapper.contains(e.target)) panel.style.display = 'none'; });
+
+    selectEl._custom = { wrapper, display, panel, refresh };
+    refresh();
+  }
+
+  // initialize custom multi-select for CPT
+  createCustomMultiDropdown(cptSelect, () => _cachedCPTs, fs => ((fs?.cptProcedure?.cptCode ?? fs?.cptCode ?? fs?.code ?? '') + (fs?.cptProcedure?.cptDescription ? (' — ' + fs.cptProcedure.cptDescription) : '')), fs => (fs?.cptProcedure?.cptProcedureId ?? fs?.cptProcedureId ?? fs?.id ?? ''));
 
   function log(msg){ /* deprecated: keep for rare notes, but do not add to table to avoid noise */ }
 
@@ -488,23 +630,25 @@
     const selApptTypeName = (apptTypeSelect && apptTypeSelect.selectedOptions && apptTypeSelect.selectedOptions[0]) ? apptTypeSelect.selectedOptions[0].textContent : undefined;
     const selPhysicianId = physicianSelect && physicianSelect.value ? Number(physicianSelect.value) : undefined;
     const selPhysicianName = (physicianSelect && physicianSelect.selectedOptions && physicianSelect.selectedOptions[0]) ? physicianSelect.selectedOptions[0].textContent : undefined;
-    const selCptProcedureId = cptSelect && cptSelect.value ? Number(cptSelect.value) : undefined;
-    const selCptLabel = (cptSelect && cptSelect.selectedOptions && cptSelect.selectedOptions[0]) ? cptSelect.selectedOptions[0].textContent : undefined;
-    const selCptCode = (() => {
-      if (!selCptLabel) return undefined;
-      const parts = String(selCptLabel).split(' - ');
-      return parts[0] && parts[0].trim() ? parts[0].trim() : undefined;
-    })();
-    const selFeeSchedule = (() => {
+    // gather multiple selected CPTs (multi-select)
+    const selCptValues = (() => {
       try {
-        const id = selCptProcedureId;
-        if (!id || !_cachedCPTs) return undefined;
-        const match = (_cachedCPTs || []).find(fs => {
-          const pid = fs?.cptProcedure?.cptProcedureId ?? fs?.cptProcedureId ?? fs?.id;
-          return Number(pid) === Number(id);
-        });
-        return match ? match : undefined;
-      } catch (e) { return undefined; }
+        if (!cptSelect) return [];
+        const opts = Array.from(cptSelect.selectedOptions || []);
+        return opts.map(o => o.value).filter(v => v !== undefined && v !== null && String(v).trim() !== '');
+      } catch (e) { return []; }
+    })();
+    const selFeeSchedules = (() => {
+      try {
+        if (!Array.isArray(_cachedCPTs) || !selCptValues.length) return [];
+        return selCptValues.map(v => {
+          const idNum = Number(v);
+          return (_cachedCPTs || []).find(fs => {
+            const pid = fs?.cptProcedure?.cptProcedureId ?? fs?.cptProcedureId ?? fs?.id;
+            return Number(pid) === idNum;
+          });
+        }).filter(Boolean);
+      } catch (e) { return []; }
     })();
 
     const payload = {
@@ -524,9 +668,9 @@
         , appointmentTypeName: selApptTypeName
         , physicianId: selPhysicianId
         , physician: selPhysicianName
-        , cptProcedureId: selCptProcedureId
-        , cptCode: selCptCode
-        , feeScheduleOverride: selFeeSchedule
+        , cptProcedureId: selCptValues.length ? Number(selCptValues[0]) : undefined
+        , cptCode: selFeeSchedules.length ? (selFeeSchedules[0].cptProcedure?.cptCode ?? selFeeSchedules[0].cptCode) : undefined
+        , feeScheduleOverride: selFeeSchedules
         , flowDepth: flowDepth ? Number(flowDepth.value) : 3
       }
     };

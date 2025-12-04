@@ -241,11 +241,22 @@ export async function createCaseSummary({
 		}
 	}
 
-	// apply CPT/FeeSchedule overrides to caseProcedures (first entry by default)
+	// apply CPT/FeeSchedule overrides to caseProcedures
+	// Support either a single object or an array of feeScheduleOverride entries
 	if (feeScheduleOverride && Array.isArray(payload.caseProcedures) && payload.caseProcedures.length) {
-		const fsItem = feeScheduleOverride;
-		payload.caseProcedures = payload.caseProcedures.map((cp: any, idx: number) => {
-			if (idx !== 0) return cp; // apply to primary/first by default
+		const items = Array.isArray(feeScheduleOverride) ? feeScheduleOverride : [feeScheduleOverride];
+		// If more fee schedules than existing procedures, clone the last procedure to create placeholders
+		let procedures = payload.caseProcedures.slice();
+		if (items.length > procedures.length) {
+			const last = procedures[procedures.length - 1];
+			for (let i = procedures.length; i < items.length; i++) {
+				procedures.push(JSON.parse(JSON.stringify(last || {})));
+			}
+		}
+		// map each fee schedule to corresponding procedure index
+		procedures = procedures.map((cp: any, idx: number) => {
+			const fsItem = items[idx];
+			if (!fsItem) return cp; // leave unchanged if no mapping provided
 			const updated = { ...cp };
 			// direct CPT fields
 			updated.cptCode = fsItem.cptProcedure?.cptCode ?? updated.cptCode;
@@ -254,16 +265,15 @@ export async function createCaseSummary({
 			updated.procedureDisplayName = fsItem.procedureDisplayName ?? `${fsItem.cptProcedure?.cptCode ?? ''}; ${fsItem.procedure}`.trim();
 			// top-level feeSchedule references (keep in sync with nested feeScheduleItem)
 			updated.feeScheduleId = fsItem.feeScheduleId ?? updated.feeScheduleId;
-			updated.feeScheduleHistoryId = fsItem.feeScheduleHistoryId ?? updated.feeScheduleHistoryId ?? (fsItem.feeScheduleHistoryId ?? undefined);
+			updated.feeScheduleHistoryId = fsItem.feeScheduleHistoryId ?? updated.feeScheduleHistoryId ?? undefined;
 			updated.feeScheduleRootId = fsItem.feeScheduleRootId ?? updated.feeScheduleRootId;
-			// keep physician fields as-is; only CPT mapping changes
 			// attach feeScheduleItem in expected structure
 			updated.feeScheduleItem = {
 				feeScheduleId: fsItem.feeScheduleId,
 				procedure: fsItem.procedure,
 				organizationId: fsItem.organizationId,
 				cptProcedureId: fsItem.cptProcedureId,
-				cptProcedure: {
+				cptProcedure: fsItem.cptProcedure ? {
 					cptProcedureId: fsItem.cptProcedure.cptProcedureId,
 					cptCode: fsItem.cptProcedure.cptCode,
 					cptDescription: fsItem.cptProcedure.cptDescription,
@@ -271,7 +281,7 @@ export async function createCaseSummary({
 					isCdtCode: fsItem.cptProcedure.isCdtCode,
 					isCustomCode: fsItem.cptProcedure.isCustomCode,
 					sourceIdentifier: fsItem.cptProcedure.sourceIdentifier,
-				},
+				} : undefined,
 				modifiedProcedureDescription: fsItem.modifiedProcedureDescription ?? `${fsItem.cptProcedure?.cptCode ?? ''}; ${fsItem.procedure}`.trim(),
 				status: fsItem.status ?? 'Billable',
 				amount: fsItem.amount ?? updated.feeScheduleItem?.amount ?? undefined,
@@ -297,6 +307,7 @@ export async function createCaseSummary({
 			};
 			return updated;
 		});
+		payload.caseProcedures = procedures;
 	}
 
 	// no appointment type overrides here (reverted)
