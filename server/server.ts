@@ -98,6 +98,8 @@ app.post('/seed', (req, res) => {
 				physicianIdOverride: hasPhysId ? opts.physicianId : undefined,
 				physicianNameOverride: hasPhysId ? opts.physician : undefined,
 				feeScheduleOverride: opts.feeScheduleOverride,
+				// forward CPT amounts mapping from UI so charge entry can use per-code amounts
+				cptAmounts: opts.cptAmounts,
 				dos: opts.dos,
 					logFn: logger,
 					extraHeaders,

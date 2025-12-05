@@ -94,6 +94,7 @@ export type CreateBasicPatientsOptions = {
 	physicianIdOverride?: number;
 	physicianNameOverride?: string;
 	feeScheduleOverride?: any; // FeeSchedule object to map CPT dynamically
+	cptAmounts?: Record<string, number>;
 	dos?: string; // optional ISO date string for Date of Service
 	logFn?: (entry: ApiLogEntry) => void;
 	username?: string;
@@ -270,7 +271,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 										// depth >=2 => cases-to-code; depth >=3 => include charge entry
 										if (passCaseSummaryId && depth >= 2) {
 											try { console.log('[createBasicPatients] depth>=2 performPatientCasesToCode', { depth, caseSummaryId: passCaseSummaryId }); } catch (e) {}
-											await codingChargeEntry.performPatientCasesToCode(apiBaseUrl, String(passCaseSummaryId), token, logFn, { chargeEntry: depth >= 3 });
+											await codingChargeEntry.performPatientCasesToCode(apiBaseUrl, String(passCaseSummaryId), token, logFn, { chargeEntry: depth >= 3, cptAmounts: (opts as any).cptAmounts, feeScheduleOverride: (opts as any).feeScheduleOverride });
 										}
 									} catch (dfErr) {
 										try { console.log('[runDischargeFlow] error:', String(dfErr)); } catch (e) {}

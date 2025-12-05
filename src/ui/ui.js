@@ -480,14 +480,38 @@
         item.style.display = 'flex';
         item.style.alignItems = 'center';
         item.style.gap = '8px';
+
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.value = id;
         cb.checked = !!(Array.from(selectEl.options || []).find(o => String(o.value) === id && o.selected));
+
+        // amount input for this CPT (visible when checkbox checked)
+        const amt = document.createElement('input');
+        amt.type = 'number';
+        amt.step = '0.01';
+        amt.min = '0';
+        amt.placeholder = 'Amount';
+        amt.style.width = '100px';
+        amt.style.padding = '4px 6px';
+        amt.style.border = '1px solid rgba(15,23,42,0.06)';
+        amt.style.borderRadius = '6px';
+        amt.style.boxSizing = 'border-box';
+        amt.style.display = cb.checked ? '' : 'none';
+
+        // initialize stored amount on the native option element so refresh can preserve it
+        try {
+          const nativeOpt = Array.from(selectEl.options || []).find(o => String(o.value) === id);
+          if (nativeOpt && typeof nativeOpt._amount === 'undefined') nativeOpt._amount = '';
+          if (nativeOpt && nativeOpt._amount) amt.value = nativeOpt._amount;
+        } catch (e) {}
+
         cb.addEventListener('change', (e) => {
           try {
             const o = Array.from(selectEl.options || []).find(o2 => String(o2.value) === id);
             if (o) o.selected = cb.checked;
+            // show/hide amount input
+            amt.style.display = cb.checked ? '' : 'none';
             // update display text
             const selCount = (selectEl.selectedOptions && selectEl.selectedOptions.length) ? selectEl.selectedOptions.length : 0;
             display.textContent = selCount ? `${selCount} selected` : 'Select...';
@@ -495,6 +519,15 @@
             try { selectEl.dispatchEvent(ev); } catch (e) {}
           } catch (e) {}
         });
+
+        // save amount to native option whenever changed
+        amt.addEventListener('input', () => {
+          try {
+            const o = Array.from(selectEl.options || []).find(o2 => String(o2.value) === id);
+            if (o) o._amount = amt.value;
+          } catch (e) {}
+        });
+
         const span = document.createElement('div');
         span.style.flex = '1';
         span.style.whiteSpace = 'nowrap';
@@ -503,9 +536,10 @@
         span.textContent = label;
         item.appendChild(cb);
         item.appendChild(span);
+        item.appendChild(amt);
         item.addEventListener('click', (ev) => {
-          // avoid double toggling when clicking checkbox
-          if (ev.target === cb) return;
+          // avoid double toggling when clicking checkbox or amount input
+          if (ev.target === cb || ev.target === amt) return;
           cb.checked = !cb.checked;
           cb.dispatchEvent(new Event('change'));
         });
@@ -799,6 +833,30 @@
       } catch (e) { return []; }
     })();
 
+    // Collect per-CPT amounts from native option elements
+    const cptAmounts = (() => {
+      try {
+        if (!cptSelect) return {};
+        const amounts = {};
+        Array.from(cptSelect.options || []).forEach(o => {
+          try {
+            const id = String(o.value);
+            if (!id) return;
+            // only include amounts for selected options
+            if (!o.selected) return;
+            const raw = (typeof o._amount !== 'undefined') ? o._amount : (o.getAttribute && o.getAttribute('data-amount')) || '';
+            const num = (raw === '' || raw === null || typeof raw === 'undefined') ? null : Number(raw);
+            if (num === null || Number.isNaN(num)) {
+              // skip empty amounts
+            } else {
+              amounts[id] = num;
+            }
+          } catch (e) {}
+        });
+        return amounts;
+      } catch (e) { return {}; }
+    })();
+
     const payload = {
       opts: {
         action: 'createBasicPatients',
@@ -819,7 +877,17 @@
         , physician: selPhysicianName
         , cptProcedureId: selCptValues.length ? Number(selCptValues[0]) : undefined
         , cptCode: selFeeSchedules.length ? (selFeeSchedules[0].cptProcedure?.cptCode ?? selFeeSchedules[0].cptCode) : undefined
-        , feeScheduleOverride: selFeeSchedules
+        , feeScheduleOverride: selFeeSchedules.map(fs => {
+            try {
+              const pid = String(fs?.cptProcedure?.cptProcedureId ?? fs?.cptProcedureId ?? fs?.id ?? '');
+              const copy = Object.assign({}, fs);
+              if (cptAmounts && Object.prototype.hasOwnProperty.call(cptAmounts, pid)) {
+                copy._amount = cptAmounts[pid];
+              }
+              return copy;
+            } catch (e) { return fs; }
+          })
+        , cptAmounts: cptAmounts
         , flowDepth: flowDepth ? Number(flowDepth.value) : 3
       }
     };

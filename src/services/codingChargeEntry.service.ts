@@ -26,7 +26,7 @@ export async function getICDCode(apiBaseUrl: string, icdCode: string, token: str
 }
 
 
-export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryId: string, token: string, logFn?: (entry: ApiLogEntry) => void, options?: { chargeEntry?: boolean }) {
+export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryId: string, token: string, logFn?: (entry: ApiLogEntry) => void, options?: { chargeEntry?: boolean, cptAmounts?: Record<string, number>, feeScheduleOverride?: any[] }) {
   const diagnosisCode = DEFAULT_DIAG_CODE;
   // load template
   const tplPath = path.join(__dirname, '..', 'reqTemplates', 'CasesToCodeRequest.json');
@@ -103,6 +103,15 @@ export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryI
   if (doChargeEntry) {
     try {
       try { console.log('[performPatientCasesToCode] calling performPatientChargeEntry'); } catch (ee) {}
+      // augment response object with UI-provided amounts for charge wiring
+      try {
+        if (options && options.cptAmounts) {
+          respObj.cptAmounts = options.cptAmounts;
+        }
+        if (options && options.feeScheduleOverride) {
+          respObj.feeScheduleOverride = options.feeScheduleOverride;
+        }
+      } catch (e) {}
       const chargeResult = await performPatientChargeEntry(apiBaseUrl, respObj, 'A_2018', 'bone', '200', token, logFn);
       try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'ok', timestamp: new Date().toISOString(), durationMs: 0 } as any); } catch (e) {}
       try { console.log('[performPatientChargeEntry] result:', JSON.stringify(chargeResult)); } catch (e) {}
@@ -216,9 +225,52 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     ? casesToCodeResponse.result.performedItems
     : [];
 
-  // build amounts list
-  const amountMul = amount ?? '200';
-  const allAmounts = amountMul.includes(';') ? amountMul.split(';') : [amountMul];
+  // helper to resolve amount per performed procedure using multiple possible sources from UI
+  function resolveAmount(perf: any, resp: any, fallback: string | number): number {
+    try {
+      const fb = Number(parseFloat(String(fallback ?? '200')));
+      // direct on performed item
+      const direct = (perf && typeof perf._amount !== 'undefined') ? Number(parseFloat(String(perf._amount))) : NaN;
+      if (!Number.isNaN(direct) && direct > 0) return Math.round(direct);
+      // feeScheduleItem annotated
+      const fsAmt = (perf && perf.feeScheduleItem && typeof perf.feeScheduleItem._amount !== 'undefined') ? Number(parseFloat(String(perf.feeScheduleItem._amount))) : NaN;
+      if (!Number.isNaN(fsAmt) && fsAmt > 0) return Math.round(fsAmt);
+      // response-level cptAmounts mapping: try by cptProcedureId then by cptCode
+      try {
+        const m = resp && resp.cptAmounts ? resp.cptAmounts : (resp && resp.result && resp.result.cptAmounts ? resp.result.cptAmounts : null);
+        if (m && typeof m === 'object') {
+          const pid = String(perf?.cptProcedureId ?? perf?.feeScheduleItem?.cptProcedureId ?? '');
+          if (pid && Object.prototype.hasOwnProperty.call(m, pid)) {
+            const v = Number(parseFloat(String(m[pid])));
+            if (!Number.isNaN(v) && v > 0) return Math.round(v);
+          }
+          const code = String(perf?.cptCode ?? perf?.feeScheduleItem?.cptCode ?? '');
+          if (code && Object.prototype.hasOwnProperty.call(m, code)) {
+            const v2 = Number(parseFloat(String(m[code])));
+            if (!Number.isNaN(v2) && v2 > 0) return Math.round(v2);
+          }
+        }
+      } catch (e) {}
+      // feeScheduleOverride array with _amount tagged, match by cptProcedureId
+      try {
+        const overrides = resp && resp.feeScheduleOverride ? resp.feeScheduleOverride : (resp && resp.result && resp.result.feeScheduleOverride ? resp.result.feeScheduleOverride : null);
+        if (Array.isArray(overrides)) {
+          const pidNum = Number(perf?.cptProcedureId ?? perf?.feeScheduleItem?.cptProcedureId ?? NaN);
+          const found = overrides.find((fs: any) => {
+            const fsPid = Number(fs?.cptProcedure?.cptProcedureId ?? fs?.cptProcedureId ?? fs?.id ?? NaN);
+            return !Number.isNaN(fsPid) && fsPid === pidNum;
+          });
+          if (found && typeof found._amount !== 'undefined') {
+            const v = Number(parseFloat(String(found._amount)));
+            if (!Number.isNaN(v) && v > 0) return Math.round(v);
+          }
+        }
+      } catch (e) {}
+      return Math.round(fb);
+    } catch (e) {
+      return Math.round(Number(parseFloat(String(fallback ?? '200'))));
+    }
+  }
 
   const tplPath = path.join(__dirname, '..', 'reqTemplates', 'chargeEntryRequest.json');
   const chargeEntries: any[] = [];
@@ -243,8 +295,8 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     chargeEntryObject.physicianName = performedProcedure.physicianName;
     chargeEntryObject.performedCaseProcedureId = performedProcedure.performedCaseProcedureId ?? performedProcedure.performedCaseProcedureId;
     chargeDetails.peformedCaseProcedureId = performedProcedure.performedCaseProcedureId ?? performedProcedure.performedCaseProcedureId;
-    const amt = allAmounts[i] ?? allAmounts[0] ?? amountMul;
-    chargeDetails.balance = Math.round(Number(parseFloat(String(amt))));
+    const amtNum = resolveAmount(performedProcedure, casesToCodeResponse, amount);
+    chargeDetails.balance = amtNum;
     chargeDetails.transactionId = 0;
     chargeEntryObject.units = 1;
     chargeEntryObject.sortorder = i;
@@ -262,7 +314,7 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     transactionObject.transactionId = 0;
     transactionObject.periodId = periodId;
     transactionObject.batchId = batchId;
-    transactionObject.amount = String(amt);
+    transactionObject.amount = String(amtNum);
     transactionObject.batchDescription = batchName;
     transactionObject.chargeDetails = chargeDetails;
 
@@ -271,12 +323,12 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
 
     // chargeTransaction fields
     chargeTransactionChargeDetails.peformedCaseProcedureId = performedProcedure.performedCaseProcedureId;
-    chargeTransactionChargeDetails.balance = Math.round(Number(parseFloat(String(amt))));
+    chargeTransactionChargeDetails.balance = amtNum;
     chargeTransactionChargeDetails.transactionId = 0;
     chargeTransactionObject.periodId = periodId;
     chargeTransactionObject.batchId = batchId;
     chargeTransactionObject.batchDescription = batchName;
-    chargeTransactionObject.amount = parseFloat(String(amt));
+    chargeTransactionObject.amount = amtNum;
     chargeTransactionObject.period = periodObj;
     chargeTransactionObject.batch = batchObj;
     chargeTransactionObject.chargeDetails = chargeTransactionChargeDetails;
