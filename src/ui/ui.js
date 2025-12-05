@@ -91,6 +91,9 @@
   const logAutoScroll = document.getElementById('logAutoScroll');
   const logBuffer = [];
   const elapsedEl = document.getElementById('elapsedDisplay');
+  const runProgressFill = document.getElementById('runProgressFill');
+  const runProgressLabel = document.getElementById('runProgressLabel');
+  const runProgressWrap = document.getElementById('runProgressWrap');
   function renderTable(){
     if (!logTableBody) return;
     const q = (logFilter && logFilter.value ? logFilter.value.toLowerCase() : '').trim();
@@ -119,6 +122,7 @@
     } catch (e) { return new Date().toISOString().slice(11,19); }
   }
 
+
   function makeOptionsFromRows(rows, makeLabel, makeValue) {
     if (!Array.isArray(rows)) return '';
     return rows.map(r => {
@@ -128,6 +132,53 @@
         return `<option value="${val}">${label}</option>`;
       } catch (e) { return '' }
     }).join('');
+  }
+
+  // Progress helpers
+  let _animTimer = null;
+  let _currentPct = 0;
+  let _finalized = false;
+  function setProgressPercent(pct, text) {
+    try {
+      const clamped = Math.max(0, Math.min(100, Number(pct) || 0));
+      _currentPct = clamped;
+      if (runProgressFill) runProgressFill.style.width = clamped + '%';
+      // do not overwrite final status text once finalized
+      if (!(_finalized)) {
+        if (runProgressLabel) runProgressLabel.textContent = text || (clamped === 0 ? 'Idle' : `${clamped}%`);
+      }
+    } catch (e) {}
+  }
+
+  function animateIndeterminate() {
+    // simple looping progress animation while waiting for server
+    let v = 0;
+    clearInterval(_animTimer);
+    _animTimer = setInterval(() => {
+      v = (v + 7) % 100;
+      setProgressPercent(v, 'Running...');
+    }, 250);
+  }
+
+  function stopIndeterminate() {
+    try { clearInterval(_animTimer); _animTimer = null; } catch (e) {}
+  }
+
+  function setStatusResult(result, pct) {
+    try {
+      if (!runProgressLabel) return;
+      const effectivePct = (typeof pct === 'number') ? Math.max(0, Math.min(100, Math.round(pct))) : Math.max(0, Math.min(100, Math.round(_currentPct || 0)));
+      if (result === 'pass') {
+        _finalized = true;
+        runProgressLabel.textContent = `${effectivePct}% · Successful`;
+      } else if (result === 'fail') {
+        _finalized = true;
+        runProgressLabel.textContent = `${effectivePct}% · Failed`;
+      } else {
+        _finalized = false;
+        runProgressLabel.textContent = `${effectivePct}%`;
+      }
+    } catch (e) {}
   }
 
   function filterSelectBySearch(searchEl, selectEl, cachedRows, makeLabel, makeValue) {
@@ -149,6 +200,72 @@
     });
     selectEl.innerHTML = makeOptionsFromRows(filtered, makeLabel, makeValue);
     if (selectEl.options && selectEl.options.length) selectEl.selectedIndex = 0;
+  }
+
+  // Polling helper: when server returns a runId, poll /seed/status?runId=... for incremental logs
+  async function pollRunStatus(runId, opts = {}) {
+    const intervalMs = opts.intervalMs || 1000;
+    const maxPolls = opts.maxPolls || 300; // 5 minutes default
+    let polls = 0;
+    let finished = false;
+    let lastCount = 0;
+    while (!finished && polls < maxPolls) {
+      polls += 1;
+      try {
+        const q = '/seed/status?runId=' + encodeURIComponent(runId);
+        const res = await fetch(q, { method: 'GET', headers: { 'token': token || '' } });
+        let j2 = null;
+        try { j2 = await res.json(); } catch (e) { j2 = null; }
+        if (!j2) {
+          await new Promise(r => setTimeout(r, intervalMs));
+          continue;
+        }
+        // merge any new logs
+        try {
+          if (Array.isArray(j2.logs) && j2.logs.length) {
+            // assume server returns logs in chronological order; add newest to front
+            const newLogs = j2.logs.slice(lastCount);
+            if (newLogs.length) {
+              // insert each new log at front so recent entries show on top (consistent with existing UI)
+              for (let i = newLogs.length - 1; i >= 0; i--) {
+                const l = newLogs[i];
+                const when = formatTime(l.startTime || l.timestamp);
+                const status = l.status || (l.error ? 'error' : 'unknown');
+                const dur = Number(l.durationMs || 0);
+                const dsec = (dur/1000).toFixed(2) + 's';
+                logBuffer.unshift({ time: when, method: l.method || 'GET', url: l.url || '', status, duration: dsec });
+              }
+              renderTable();
+            }
+            lastCount = j2.logs.length;
+          }
+        } catch (e) { /* ignore merge errors */ }
+
+        // update percent if provided
+        try {
+          if (typeof j2.completedCount === 'number' && typeof count !== 'undefined') {
+            const total = Number(count && count.value ? count.value : 1) || 1;
+            const done = Number(j2.completedCount || 0);
+            const pct = Math.round(Math.min(100, (done / Math.max(1, total)) * 100));
+            setProgressPercent(pct, `${pct}%`);
+          } else if (typeof j2.percent === 'number') {
+            setProgressPercent(j2.percent, `${Math.round(j2.percent)}%`);
+          }
+        } catch (e) {}
+
+        // check finished
+        if (j2.finished || j2.ok || j2.status === 'finished' || j2.completed) {
+          finished = true;
+          // return final combined object (prefer j2 but include runId)
+          return Object.assign({}, j2, { runId });
+        }
+      } catch (e) {
+        // ignore transient network errors and retry
+      }
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+    // timed out; return empty object with runId
+    return { runId, ok: false, finished: false };
   }
 
   // Create a custom dropdown that embeds a search input as the first element inside the dropdown panel.
@@ -634,6 +751,12 @@
     try { if (logoEl) logoEl.classList.add('running'); } catch (e) {}
     // reset elapsed display for this run (seconds)
     try { if (elapsedEl) elapsedEl.textContent = 'Total: 0.00s'; } catch (e) {}
+    // reset progress and result
+    stopIndeterminate(); setProgressPercent(0, 'Starting...'); setStatusResult(null);
+    // show progress wrapper when Run clicked
+    try { if (runProgressWrap) runProgressWrap.style.display = ''; } catch (e) {}
+    // ensure label doesn't show old result
+    try { if (runProgressLabel) runProgressLabel.textContent = 'Starting...'; } catch (e) {}
     // Gather selected labels for room, appointment type, physician
     const selRoomId = roomSelect && roomSelect.value ? Number(roomSelect.value) : undefined;
     const selRoomName = (roomSelect && roomSelect.selectedOptions && roomSelect.selectedOptions[0]) ? roomSelect.selectedOptions[0].textContent : undefined;
@@ -701,32 +824,45 @@
       }
     };
     log('Sending seed request: ' + JSON.stringify(payload));
-    const res = await fetch('/seed', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
-    const j = await res.json();
+    // start indeterminate animation until server responds
+    animateIndeterminate();
+    let j = null;
+    
+    try {
+      const res = await fetch('/seed', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
+      try { j = await res.json(); } catch (e) { j = { ok: false, error: 'invalid-json' }; }
+    } catch (e) {
+      j = { ok: false, error: String(e) };
+    }
+    stopIndeterminate();
     try { if (logoEl) logoEl.classList.remove('running'); } catch (e) {}
     log('Seed response: ' + JSON.stringify(j));
-    // update progress stepper from response
-    try { /* no progress UI to update */ } catch (e) {}
-      // If run finished successfully, complete bar and keep visible
-      try {
-        if (j && j.ok) {
-          setProgressPercent(100);
-          // keep the bar visible after completion per request
-        }
-      } catch (e) {}
+    // If server returned a runId, poll for incremental logs/status and merge them live
+    let finalResp = j;
     try {
-      // compute and show total elapsed time from logs (sum of durationMs)
+      if (j && j.runId) {
+        // start polling and merge results — pollRunStatus returns final combined object
+        const polled = await pollRunStatus(j.runId, { intervalMs: 800, maxPolls: 900 });
+        if (polled && typeof polled === 'object') {
+          finalResp = Object.assign({}, j, polled);
+        }
+      }
+    } catch (e) {
+      // ignore polling errors and fall back to original response
+    }
+    // compute and show total elapsed time from logs (sum of durationMs)
+    try {
       try {
-        if (elapsedEl && j) {
-          if (typeof j.runElapsedMs === 'number') {
-            const s = (j.runElapsedMs/1000).toFixed(2);
+        if (elapsedEl && finalResp) {
+          if (typeof finalResp.runElapsedMs === 'number') {
+            const s = (finalResp.runElapsedMs/1000).toFixed(2);
             elapsedEl.textContent = `Total: ${s}s`;
-          } else if (Array.isArray(j.logs) && j.logs.length) {
+          } else if (Array.isArray(finalResp.logs) && finalResp.logs.length) {
             // sum of durations (aggregate) and wall-clock elapsed (earliest start to latest end)
             let sumMs = 0;
             let minStart = Number.MAX_SAFE_INTEGER;
             let maxEnd = 0;
-            j.logs.forEach(it => {
+            finalResp.logs.forEach(it => {
               const d = Number(it.durationMs) || 0;
               sumMs += d;
               const ts = it.timestamp ? Date.parse(it.timestamp) : NaN;
@@ -742,21 +878,63 @@
           }
         }
       } catch (e) { log('elapsed calc error'); }
-      if (j && Array.isArray(j.logs)) {
+
+      // merge all logs into the UI buffer (most recent first)
+      if (finalResp && Array.isArray(finalResp.logs)) {
         log('--- API Call Logs ---');
-        j.logs.forEach(l => {
+        finalResp.logs.forEach(l => {
           try {
             const when = formatTime(l.startTime || l.timestamp);
             const status = l.status || (l.error ? 'error' : 'unknown');
             const dur = Number(l.durationMs || 0);
             const dsec = (dur/1000).toFixed(2)+'s';
             logBuffer.unshift({ time: when, method: l.method, url: l.url, status, duration: dsec });
-          } catch (e) { log('log parse error'); }
+          } catch (e) { /* ignore per-log parse error */ }
         });
+        // compute a simple progress percent and failure count
+        let failureCount = 0;
+        try {
+          const total = Number(count && count.value ? count.value : (finalResp.logs.length || 1)) || 1;
+          // count failures conservatively
+          failureCount = (finalResp.logs || []).reduce((acc, it) => {
+            try {
+              const st = it.status || (it.error ? 'error' : undefined);
+              if (st === undefined || st === null) return acc;
+              if (typeof st === 'number') return acc + (st >= 400 ? 1 : 0);
+              const s = String(st).toLowerCase().trim();
+              if (s === 'error') return acc + 1;
+              if (/^\d+$/.test(s)) return acc + (Number(s) >= 400 ? 1 : 0);
+              if (s.startsWith('4') || s.startsWith('5')) return acc + 1;
+              return acc;
+            } catch (e) { return acc; }
+          }, 0);
+          const done = (finalResp._completedCount != null) ? Number(finalResp._completedCount) : (finalResp.logs.length || 0);
+          const pct = Math.round(Math.min(100, (done / Math.max(1,total)) * 100));
+          setProgressPercent(pct, `${pct}%`);
+        } catch (e) { /* ignore progress calc error */ }
         renderTable();
-        // end logs
+        // decide final status
+        if (failureCount > 0) {
+          setProgressPercent(100, 'Completed');
+          setStatusResult('fail', _currentPct);
+        } else if (finalResp && finalResp.ok) {
+          setProgressPercent(100, 'Completed');
+          setStatusResult('pass', 100);
+        } else {
+          setProgressPercent(100, 'Completed');
+          setStatusResult('fail', 100);
+        }
+      } else {
+        // no logs — fallback to j.ok
+        if (finalResp && finalResp.ok) {
+          setProgressPercent(100, 'Completed');
+          setStatusResult('pass', 100);
+        } else {
+          setProgressPercent(100, 'Completed');
+          setStatusResult('fail', 100);
+        }
       }
-    } catch (e) { /* ignore render logs error */ }
+    } catch (e) { setStatusResult('fail', _currentPct); }
   });
 
   // Progress UI removed
