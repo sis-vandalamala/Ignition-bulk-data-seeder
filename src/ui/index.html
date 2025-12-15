@@ -178,6 +178,7 @@
                 <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="periodBatch" id="periodBatchSelect" value="select" checked /> Select</label>
                 <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="periodBatch" id="periodBatchCreate" value="create" /> Create New</label>
               </div>
+                 <div id="periodBatchHint" class="muted" style="margin-top:8px">'Create New' uses entered suffix and creates new period and batch.</div>
             </div>
           </div>
           <div class="support-field-wrap" id="periodSelectWrap" style="display:none">
@@ -186,6 +187,7 @@
               <select id="periodSelect">
                 <option value="" disabled selected>Loading...</option>
               </select>
+              <div class="muted" style="margin-top:6px;font-size:12px">Shows only periods that have batches</div>
             </div>
           </div>
           <div class="support-field-wrap" id="batchSelectWrap" style="display:none">

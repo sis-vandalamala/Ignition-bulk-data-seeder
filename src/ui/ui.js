@@ -33,6 +33,7 @@
   const batchSelectWrap = document.getElementById('batchSelectWrap');
   const periodSelect = document.getElementById('periodSelect');
   const batchSelect = document.getElementById('batchSelect');
+  const periodBatchHint = document.getElementById('periodBatchHint');
   const dosInput = $('dos');
   const runBtn = $('runBtn');
   const autoRunBtn = $('autoRunBtn');
@@ -180,6 +181,8 @@
   let _cachedAppts = null;
   let _cachedPhysicians = null;
   let _cachedCPTs = null;
+  let _cachedPeriods = null;
+  let _cachedBatches = null;
   function renderTable(){
     if (!logTableBody) return;
     const q = (logFilter && logFilter.value ? logFilter.value.toLowerCase() : '').trim();
@@ -763,6 +766,22 @@
   // initial visibility
   updatePeriodBatchVisibility();
 
+  // when period changes, update batch select
+  try {
+    if (periodSelect) {
+      periodSelect.addEventListener('change', () => {
+        try {
+          const pid = periodSelect.value;
+          const items = Array.isArray(_cachedBatches) ? _cachedBatches.filter(b => String(b.periodId) === String(pid)) : [];
+          if (batchSelect) {
+            batchSelect.innerHTML = items.map(b => `<option value="${b.batchId}">${b.batchDescription ?? b.label ?? String(b.batchId)}</option>`).join('');
+            if (batchSelect.options && batchSelect.options.length) batchSelect.selectedIndex = 0;
+          }
+        } catch (e) {}
+      });
+    }
+  } catch (e) {}
+
   function log(msg){ /* deprecated: keep for rare notes, but do not add to table to avoid noise */ }
 
   if (logFilter) logFilter.addEventListener('input', renderTable);
@@ -872,6 +891,26 @@
               if (physicianSelect.options && physicianSelect.options.length) physicianSelect.selectedIndex = 0;
               try { if (physicianSelect && physicianSelect._custom && typeof physicianSelect._custom.refresh === 'function') physicianSelect._custom.refresh(); } catch (e) {}
             }
+            // populate periods and batches (from getPeriodBatches)
+            try {
+              if (Array.isArray(sup.periods) && periodSelect) {
+                _cachedPeriods = sup.periods.slice();
+                // Only include periods that have batches
+                const filtered = _cachedPeriods.filter(p => Array.isArray(p.batches) && p.batches.length > 0);
+                periodSelect._originalOptions = filtered.slice();
+                periodSelect.innerHTML = filtered.map(p => `<option value="${p.periodId}">${p.label ?? p.periodName ?? String(p.periodId)}</option>`).join('');
+                if (periodSelect.options && periodSelect.options.length) periodSelect.selectedIndex = 0;
+              }
+              if (Array.isArray(sup.batches) && batchSelect) {
+                _cachedBatches = sup.batches.slice();
+                batchSelect._originalOptions = sup.batches.slice();
+                // default to batches for first selected period (if any)
+                const firstPeriodId = periodSelect && periodSelect.value ? periodSelect.value : undefined;
+                const initialBatches = (firstPeriodId && Array.isArray(_cachedBatches)) ? _cachedBatches.filter(b => String(b.periodId) === String(firstPeriodId)) : _cachedBatches.slice();
+                batchSelect.innerHTML = initialBatches.map(b => `<option value="${b.batchId}">${b.batchDescription ?? b.label ?? String(b.batchId)}</option>`).join('');
+                if (batchSelect.options && batchSelect.options.length) batchSelect.selectedIndex = 0;
+              }
+            } catch (e) { /* ignore period/batch populate errors */ }
             if (sup.feeSchedule && Array.isArray(sup.feeSchedule) && cptSelect) {
               _cachedCPTs = sup.feeSchedule.slice();
               cptSelect._originalOptions = sup.feeSchedule.slice();

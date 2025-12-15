@@ -4,7 +4,7 @@ import { loginUser, logoutUser } from './auth';
 import { setGlobalApiLogger } from '../src/utils/api';
 import { postJson } from '../src/utils/api';
 import { createBasicPatients } from '../src/services/patient.service';
-import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID, getFeeSchedules } from '../src/services/support.service';
+import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID, getFeeSchedules, getPeriodBatches } from '../src/services/support.service';
 
 const app = express();
 app.use(express.json());
@@ -167,10 +167,24 @@ app.post('/support-data', async (req, res) => {
 						(physicians as any).__feeSchedule = feeSchedule; // keep local reference (not used elsewhere)
 					} catch (e: any) { /* suppressed getFeeSchedules error */ }
 
+					try {
+						// Fetch periods and batches
+						const pb = await getPeriodBatches(token as any, apiUrl);
+						// pb is expected to be an array of period objects each having a `batches` array
+						const filtered = Array.isArray(pb) ? pb.filter((p: any) => Array.isArray(p.batches) && p.batches.length > 0) : [];
+						const periods = filtered.map((p: any) => ({ periodId: p.periodId, label: p.label ?? p.periodName, value: p.periodId, batches: p.batches }));
+						const batches = filtered.flatMap((p: any) => (p.batches || []).map((b: any) => Object.assign({}, b, { periodId: p.periodId })));
+						// attach to response via physicians container to avoid changing structure earlier? we'll return separately below
+						(physicians as any).__periods = periods;
+						(physicians as any).__batches = batches;
+					} catch (e: any) { /* suppressed getPeriodBatches error */ }
+
 					// suppressed support-data captured logs output
-					// include feeSchedule if available (stored on physicians.__feeSchedule above)
+					// include feeSchedule, periods and batches if available (stored on physicians.__* above)
 					const feeSchedule = (physicians as any && (physicians as any).__feeSchedule) ? (physicians as any).__feeSchedule : undefined;
-					return res.json({ ok: true, rooms, appointmentTypes, physicians, feeSchedule, logs });
+					const periods = (physicians as any && (physicians as any).__periods) ? (physicians as any).__periods : undefined;
+					const batches = (physicians as any && (physicians as any).__batches) ? (physicians as any).__batches : undefined;
+					return res.json({ ok: true, rooms, appointmentTypes, physicians, feeSchedule, periods, batches, logs });
 			} finally {
 				try { setGlobalApiLogger(undefined); } catch (e) {}
 			}

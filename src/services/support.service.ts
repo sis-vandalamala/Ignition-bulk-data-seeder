@@ -112,6 +112,65 @@ export async function getFeeSchedules(token: string, apiBaseUrl?: string, extraH
     }
 }
 
+export async function getPeriodBatches(token: string, apiBaseUrl?: string, extraHeaders?: Record<string,string>) {
+    if (!apiBaseUrl) throw new Error('apiBaseUrl is required for getPeriodBatches');
+    const base = String(apiBaseUrl).replace(/\/+$/, '');
+    const url = `${base}/api/PeriodBatch/GetPeriodBatch/false`;
+    const defaultHeaders: Record<string,string> = Object.assign({
+        Accept: 'application/json',
+        priority: 'u=1, i',
+        token,
+        Referer: base + '/',
+    }, extraHeaders || {});
+
+    try {
+        const res = await getJson(url, 15000, defaultHeaders as any);
+        try { const first = Array.isArray(res) ? res[0] : res; console.log('[getPeriodBatches] response sample:', first); } catch (e) {}
+        return res;
+    } catch (err) {
+        const axiosRes = await axios.get(url, { headers: defaultHeaders, timeout: 15000, responseType: 'json' });
+        return axiosRes.data;
+    }
+}
+
+export async function createPeriod(token: string, apiBaseUrl?: string, periodPayload?: any, extraHeaders?: Record<string,string>) {
+    if (!apiBaseUrl) throw new Error('apiBaseUrl is required for createPeriod');
+    const base = String(apiBaseUrl).replace(/\/+$/, '');
+    const url = `${base}/api/PeriodConfig/UpsertCheckedPeriodObject`;
+    const headers: Record<string,string> = Object.assign({
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        priority: 'u=1, i',
+        token,
+        Referer: base + '/',
+    }, extraHeaders || {});
+    try {
+        const axiosRes = await axios.post(url, periodPayload || {}, { headers, timeout: 15000, responseType: 'json' });
+        return axiosRes.data;
+    } catch (err) {
+        throw err;
+    }
+}
+
+export async function createBatch(token: string, apiBaseUrl?: string, batchPayload?: any, extraHeaders?: Record<string,string>) {
+    if (!apiBaseUrl) throw new Error('apiBaseUrl is required for createBatch');
+    const base = String(apiBaseUrl).replace(/\/+$/, '');
+    const url = `${base}/api/PeriodBatch/InsertBatch`;
+    const headers: Record<string,string> = Object.assign({
+        Accept: 'text/json',
+        'Content-Type': 'text/json',
+        priority: 'u=1, i',
+        token,
+        Referer: base + '/',
+    }, extraHeaders || {});
+    try {
+        const axiosRes = await axios.post(url, batchPayload || {}, { headers, timeout: 15000, responseType: 'json' });
+        return axiosRes.data;
+    } catch (err) {
+        throw err;
+    }
+}
+
 export default {
     requestRecordLock,
     releaseRecordLock,
