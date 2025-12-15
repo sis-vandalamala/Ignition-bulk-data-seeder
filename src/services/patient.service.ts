@@ -16,6 +16,38 @@ const createPatientTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'cr
 let duplicatePatientTemplate: IGetDuplicatePatient | null = null;
 let createPatientTemplate: any | null = null;
 
+const AUTO_FIRST_NAMES = [
+	'Avery', 'Atlas', 'Beck', 'Calla', 'Dorian', 'Elowen', 'Finn', 'Galen', 'Harbor', 'Indigo', 'Junia', 'Kai', 'Lennox', 'Mira', 'Nash', 'Opal', 'Pax', 'Quinn', 'Rowan', 'Sage', 'Thalia', 'Vera', 'Wyatt', 'Xander', 'Yara', 'Zane'
+];
+
+const AUTO_LAST_NAMES = [
+	'Alder', 'Briar', 'Calder', 'Dalton', 'Ellis', 'Fletcher', 'Grady', 'Hayes', 'Iverson', 'Jensen', 'Keaton', 'Larkin', 'Mercer', 'North', 'Orwell', 'Prescott', 'Quill', 'Ridley', 'Sterling', 'Tate', 'Ulrich', 'Vance', 'Whitley', 'York', 'Zeller'
+];
+
+type GeneratedName = { firstName: string; lastName: string };
+
+function createAutoNameFactory() {
+	const used = new Set<string>();
+	const randomFrom = (list: string[]) => list[Math.floor(Math.random() * list.length)] ?? 'Auto';
+	return (index: number): GeneratedName => {
+		let first = randomFrom(AUTO_FIRST_NAMES);
+		let last = randomFrom(AUTO_LAST_NAMES);
+		let attempts = 0;
+		while (used.has(`${first}|${last}`) && attempts < 40) {
+			first = randomFrom(AUTO_FIRST_NAMES);
+			last = randomFrom(AUTO_LAST_NAMES);
+			attempts += 1;
+		}
+		if (used.has(`${first}|${last}`)) {
+			const uniqueTag = `${index}${Math.random().toString(36).slice(2, 6)}`;
+			first = `${first}${uniqueTag}`;
+			last = `${last}${uniqueTag}`;
+		}
+		used.add(`${first}|${last}`);
+		return { firstName: first, lastName: last };
+	};
+}
+
 function loadTemplate(): IGetDuplicatePatient {
 	if (duplicatePatientTemplate) return duplicatePatientTemplate;
 	try {
@@ -83,7 +115,7 @@ function applyPatientDataToCreatePayload(payload: any, source: any) {
 export type CreateBasicPatientsOptions = {
 	apiBaseUrl: string; // e.g. https://host/env
 	token: string;
-	suffix: string;
+	suffix?: string;
 	count: number;
 	concurrency?: number;
 	facilityId?: number;
@@ -100,6 +132,7 @@ export type CreateBasicPatientsOptions = {
 	username?: string;
 	extraHeaders?: Record<string, string>;
     flowDepth?: number; // 0 create only,1 discharge,2 cases-to-code,3 charge entry
+	mode?: 'manual' | 'auto';
 };
 
 export type CreateBasicPatientResult = {
@@ -159,10 +192,12 @@ export async function createPatient(apiBaseUrl: string, token: string, patientPa
 }
 
 export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
-	const { apiBaseUrl, token, suffix, count, concurrency, facilityId, logFn } = opts;
+	const { apiBaseUrl, token, suffix, count, concurrency, facilityId, logFn, mode } = opts;
 	if (!apiBaseUrl) return { ok: false, error: 'apiBaseUrl is required' };
 	if (!token) return { ok: false, error: 'token is required' };
-	if (!suffix) return { ok: false, error: 'suffix is required' };
+	const suffixValue = typeof suffix === 'string' ? suffix : '';
+	const isAutoMode = mode === 'auto';
+	if (!suffixValue && !isAutoMode) return { ok: false, error: 'suffix is required' };
 	const total = Number(count) || 1;
 	const maxConcurrency = Math.max(1, Math.min(Number(concurrency) || 8, 25));
 	const base = String(apiBaseUrl).replace(/\/$/, '');
@@ -174,14 +209,16 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 	};
 
 	const tpl = loadTemplate();
+	const pickAutoName = isAutoMode ? createAutoNameFactory() : null;
 	const outcomes: Array<CreateBasicPatientResult | undefined> = new Array(total);
 	let lastPatientId: number | null = null;
 
 	const makeRequest = async (index: number) => {
+		const autoName = isAutoMode && pickAutoName ? pickAutoName(index) : null;
 		const request: IGetDuplicatePatient = {
 			...tpl,
-			firstName: `InPFname${suffix}v${index}`,
-			lastName: `InPLname${suffix}v${index}`,
+			firstName: autoName ? autoName.firstName : `InPFname${suffixValue}v${index}`,
+			lastName: autoName ? autoName.lastName : `InPLname${suffixValue}v${index}`,
 		};
 		try {
 			const response = await postJson(url, request, 20000, headers, logFn);

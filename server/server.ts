@@ -105,6 +105,7 @@ app.post('/seed', (req, res) => {
 					extraHeaders,
 					username: opts.username,
 					flowDepth: typeof opts.flowDepth === 'number' ? opts.flowDepth : undefined,
+					mode: opts.mode,
 				});
 				const runElapsedMs = Date.now() - runStart;
 				return res.json({ ok: true, result: svcRes, tokenPresent: !!token, logs, runElapsedMs });
