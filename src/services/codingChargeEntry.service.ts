@@ -5,8 +5,69 @@ import axios from 'axios';
 
 const DEFAULT_DIAG_CODE = 'H44.001';
 
+export type ChargeEntryPeriodBatch = {
+  periodId: number;
+  periodName: string;
+  batchId: number;
+  batchDescription: string;
+};
+
+export type PerformCasesToCodeOptions = {
+  chargeEntry?: boolean;
+  cptAmounts?: Record<string, number>;
+  feeScheduleOverride?: any[];
+  periodBatchOverride?: ChargeEntryPeriodBatch;
+};
+
+type PerformPatientChargeEntryOptions = {
+  amount?: string | number;
+  token?: string;
+  logFn?: (entry: ApiLogEntry) => void;
+  periodBatch?: ChargeEntryPeriodBatch;
+  caseSummaryId?: string | number;
+};
+
 function apiBase(base: string) {
   return String(base).replace(/\/$/, '') + '/api';
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function extractPerformedProcedures(resp: any): any[] {
+  if (!resp) return [];
+  const visited = new Set<any>();
+  const stack: any[] = [resp];
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current || typeof current !== 'object') continue;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    if (Array.isArray((current as any).performedItems) && (current as any).performedItems.length) {
+      return (current as any).performedItems as any[];
+    }
+    if (Array.isArray(current)) {
+      for (const item of current) stack.push(item);
+      continue;
+    }
+    const values = Object.values(current);
+    for (const value of values) {
+      if (value && (typeof value === 'object')) stack.push(value);
+    }
+  }
+  return [];
+}
+
+async function fetchScheduledProceduresWithRetry(apiBaseUrl: string, caseSummaryId: string, token: string, logFn?: (entry: ApiLogEntry) => void) {
+  const maxAttempts = 5;
+  const delayMs = 750;
+  let last: any = [];
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const scheduled = await getScheduledProcedures(apiBaseUrl, caseSummaryId, token, logFn);
+    last = scheduled;
+    if (Array.isArray(scheduled) && scheduled.length > 0) return scheduled;
+    if (attempt < maxAttempts) await sleep(delayMs);
+  }
+  return last;
 }
 
 export async function getScheduledProcedures(apiBaseUrl: string, caseSummaryId: string, token: string, logFn?: (entry: ApiLogEntry) => void) {
@@ -26,14 +87,14 @@ export async function getICDCode(apiBaseUrl: string, icdCode: string, token: str
 }
 
 
-export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryId: string, token: string, logFn?: (entry: ApiLogEntry) => void, options?: { chargeEntry?: boolean, cptAmounts?: Record<string, number>, feeScheduleOverride?: any[] }) {
+export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryId: string, token: string, logFn?: (entry: ApiLogEntry) => void, options?: PerformCasesToCodeOptions) {
   const diagnosisCode = DEFAULT_DIAG_CODE;
   // load template
   const tplPath = path.join(__dirname, '..', 'reqTemplates', 'CasesToCodeRequest.json');
   let tpl: any = {};
   try { tpl = JSON.parse(fs.readFileSync(tplPath, 'utf8')); } catch (e) { tpl = { performedItems: [], deletedPerformedItems: [] }; }
 
-  const scheduled = await getScheduledProcedures(apiBaseUrl, caseSummaryId, token, logFn);
+  const scheduled = await fetchScheduledProceduresWithRetry(apiBaseUrl, caseSummaryId, token, logFn);
   const icdRes = await getICDCode(apiBaseUrl, diagnosisCode, token, logFn);
   // icdRes may be array; find diagnosis object matching quickCode
   let diagnosisObj: any = null;
@@ -98,6 +159,11 @@ export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryI
   } catch (e) {
     // suppressed console output
   }
+  if (!respObj || typeof respObj !== 'object') respObj = {};
+  if (!respObj.result || typeof respObj.result !== 'object') respObj.result = {};
+  if (!Array.isArray(respObj.result.performedItems) || !respObj.result.performedItems.length) {
+    respObj.result.performedItems = performedItems;
+  }
 
   const doChargeEntry = options && Object.prototype.hasOwnProperty.call(options, 'chargeEntry') ? !!options.chargeEntry : true;
   if (doChargeEntry) {
@@ -112,7 +178,13 @@ export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryI
           respObj.feeScheduleOverride = options.feeScheduleOverride;
         }
       } catch (e) {}
-      const chargeResult = await performPatientChargeEntry(apiBaseUrl, respObj, 'A_2018', 'bone', '200', token, logFn);
+      const chargeResult = await performPatientChargeEntry(apiBaseUrl, respObj, {
+        amount: '200',
+        token,
+        logFn,
+        periodBatch: options?.periodBatchOverride,
+        caseSummaryId,
+      });
       try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'ok', timestamp: new Date().toISOString(), durationMs: 0 } as any); } catch (e) {}
     } catch (e) {
       try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'error', error: String(e), timestamp: new Date().toISOString() } as any); } catch (ee) {}
@@ -210,17 +282,27 @@ export async function performChargeEntry(apiBaseUrl: string, chargeEntryRequestB
   }
 }
 
-export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeResponse: any, periodName = 'A_2018', batchName = 'bone', amount = '200', token?: string, logFn?: (entry: ApiLogEntry) => void) {
-  // periodId and batchId hardcoded per request
-  const periodId = 18463;
-  const batchId = 20318;
+export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeResponse: any, options?: PerformPatientChargeEntryOptions) {
+  const defaults: ChargeEntryPeriodBatch = { periodId: 18463, periodName: 'A_2018', batchId: 20318, batchDescription: 'bone' };
+  const override = options?.periodBatch;
+  const periodId = override?.periodId ?? defaults.periodId;
+  const periodName = override?.periodName ?? defaults.periodName;
+  const batchId = override?.batchId ?? defaults.batchId;
+  const batchDescription = override?.batchDescription ?? defaults.batchDescription;
   const periodObj: any = { periodId, periodName };
-  const batchObj: any = { batchId, batchDescription: batchName };
+  const batchObj: any = { batchId, batchDescription };
+  const amountFallback = options?.amount ?? '200';
+  const authToken = options?.token ?? '';
+  const logFn = options?.logFn;
 
   // ensure casesToCodeResponse.result.performedItems exists
-  const performedProcedures = casesToCodeResponse && casesToCodeResponse.result && Array.isArray(casesToCodeResponse.result.performedItems)
-    ? casesToCodeResponse.result.performedItems
-    : [];
+  const performedProcedures = extractPerformedProcedures(casesToCodeResponse);
+  const targetCaseSummaryId = options?.caseSummaryId ?? (performedProcedures[0]?.caseSummaryId);
+  const caseSummaryIdStr = typeof targetCaseSummaryId !== 'undefined' && targetCaseSummaryId !== null ? String(targetCaseSummaryId) : '';
+
+  if (!performedProcedures.length) {
+    throw new Error(`No performed procedures returned for case ${caseSummaryIdStr || 'unknown'}, skipping charge entry.`);
+  }
 
   // helper to resolve amount per performed procedure using multiple possible sources from UI
   function resolveAmount(perf: any, resp: any, fallback: string | number): number {
@@ -292,7 +374,7 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     chargeEntryObject.physicianName = performedProcedure.physicianName;
     chargeEntryObject.performedCaseProcedureId = performedProcedure.performedCaseProcedureId ?? performedProcedure.performedCaseProcedureId;
     chargeDetails.peformedCaseProcedureId = performedProcedure.performedCaseProcedureId ?? performedProcedure.performedCaseProcedureId;
-    const amtNum = resolveAmount(performedProcedure, casesToCodeResponse, amount);
+    const amtNum = resolveAmount(performedProcedure, casesToCodeResponse, amountFallback);
     chargeDetails.balance = amtNum;
     chargeDetails.transactionId = 0;
     chargeEntryObject.units = 1;
@@ -312,7 +394,7 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     transactionObject.periodId = periodId;
     transactionObject.batchId = batchId;
     transactionObject.amount = String(amtNum);
-    transactionObject.batchDescription = batchName;
+    transactionObject.batchDescription = batchDescription;
     transactionObject.chargeDetails = chargeDetails;
 
     // reset transactionList to ensure only this transaction
@@ -324,7 +406,7 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     chargeTransactionChargeDetails.transactionId = 0;
     chargeTransactionObject.periodId = periodId;
     chargeTransactionObject.batchId = batchId;
-    chargeTransactionObject.batchDescription = batchName;
+    chargeTransactionObject.batchDescription = batchDescription;
     chargeTransactionObject.amount = amtNum;
     chargeTransactionObject.period = periodObj;
     chargeTransactionObject.batch = batchObj;
@@ -341,16 +423,18 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
   }
 
   // call performChargeEntry
-  const tok = token ?? '';
-  const chargeEntryResponse = await performChargeEntry(apiBaseUrl, chargeEntries, tok, logFn);
+  const chargeEntryResponse = await performChargeEntry(apiBaseUrl, chargeEntries, authToken, logFn);
   // update case status to '12'
-  const caseSummaryIdStr = String((performedProcedures[0] && performedProcedures[0].caseSummaryId) || '');
-  try { await updateCaseStatus(apiBaseUrl, caseSummaryIdStr, '12', tok, logFn); } catch (e) {}
+  if (caseSummaryIdStr) {
+    try { await updateCaseStatus(apiBaseUrl, caseSummaryIdStr, '12', authToken, logFn); } catch (e) {}
+  }
   // store/get charge details
   const chargeDetailsStr = getChargeDetailsFromChargeEntryResp(chargeEntryResponse);
   // call update and upsert again
-  try { await updateCaseStatus(apiBaseUrl, caseSummaryIdStr, '12', tok, logFn); } catch (e) {}
-  try { await upsertCaseSummaryInfo(apiBaseUrl, caseSummaryIdStr, '12', '11', tok, logFn); } catch (e) {}
+  if (caseSummaryIdStr) {
+    try { await updateCaseStatus(apiBaseUrl, caseSummaryIdStr, '12', authToken, logFn); } catch (e) {}
+    try { await upsertCaseSummaryInfo(apiBaseUrl, caseSummaryIdStr, '12', '11', authToken, logFn); } catch (e) {}
+  }
 
   return { chargeEntryResponse, chargeDetails: chargeDetailsStr };
 }

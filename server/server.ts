@@ -106,6 +106,9 @@ app.post('/seed', (req, res) => {
 					username: opts.username,
 					flowDepth: typeof opts.flowDepth === 'number' ? opts.flowDepth : undefined,
 					mode: opts.mode,
+					periodBatchMode: opts.mode === 'auto' ? 'auto' : (opts.periodBatch as 'select' | 'create' | undefined),
+					selectedPeriodId: typeof opts.periodId !== 'undefined' ? Number(opts.periodId) : undefined,
+					selectedBatchId: typeof opts.batchId !== 'undefined' ? Number(opts.batchId) : undefined,
 				});
 				const runElapsedMs = Date.now() - runStart;
 				return res.json({ ok: true, result: svcRes, tokenPresent: !!token, logs, runElapsedMs });

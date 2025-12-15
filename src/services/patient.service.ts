@@ -4,9 +4,9 @@ import path from 'path';
 import axios from 'axios';
 import { postJson, getJson, ApiLogEntry } from '../utils/api';
 import createCaseSummary from './caseSummary.service';
-import { requestRecordLock, releaseRecordLock } from './support.service';
+import { requestRecordLock, releaseRecordLock, getPeriodBatches, createPeriod, createBatch } from './support.service';
 import { runDischargeFlow } from './discharge.service';
-import codingChargeEntry from './codingChargeEntry.service';
+import codingChargeEntry, { type ChargeEntryPeriodBatch } from './codingChargeEntry.service';
 import type { IGetDuplicatePatient } from '../models/getDuplicatePatients.interface';
 
 // module loaded (no debug log)
@@ -23,6 +23,251 @@ const AUTO_FIRST_NAMES = [
 const AUTO_LAST_NAMES = [
 	'Alder', 'Briar', 'Calder', 'Dalton', 'Ellis', 'Fletcher', 'Grady', 'Hayes', 'Iverson', 'Jensen', 'Keaton', 'Larkin', 'Mercer', 'North', 'Orwell', 'Prescott', 'Quill', 'Ridley', 'Sterling', 'Tate', 'Ulrich', 'Vance', 'Whitley', 'York', 'Zeller'
 ];
+
+const ZERO_GUID = '00000000-0000-0000-0000-000000000000';
+
+type PeriodBatchMode = 'select' | 'create' | 'auto';
+type PeriodBatchContext = ChargeEntryPeriodBatch;
+
+function sanitizeSuffix(raw?: string | null) {
+	if (!raw) return '';
+	return raw.replace(/[^0-9a-zA-Z_-]/g, '').trim();
+}
+
+function randomAutoSuffix() {
+	const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+	let out = '';
+	for (let i = 0; i < 6; i += 1) {
+		out += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+	}
+	return out || 'AUTO';
+}
+
+function iso(date: Date) {
+	return date.toISOString();
+}
+
+function startOfMonthUtc(date: Date) {
+	return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function endOfMonthUtc(date: Date) {
+	return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+}
+
+function baseDateFromDos(dos?: string) {
+	if (!dos) return new Date();
+	const parsed = new Date(dos);
+	return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+function firstValidNumber(values: Array<any>) {
+	for (const value of values) {
+		const num = Number(value);
+		if (!Number.isNaN(num) && num > 0) return num;
+	}
+	return undefined;
+}
+
+function sameText(a?: string | null, b?: string | null) {
+	if (typeof a !== 'string' || typeof b !== 'string') return false;
+	return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+function responseCandidates(input: any): any[] {
+	const out: any[] = [];
+	const stack: any[] = [input];
+	while (stack.length) {
+		const current = stack.pop();
+		if (current === null || typeof current === 'undefined') continue;
+		if (typeof current === 'string') {
+			const trimmed = current.trim();
+			if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+				try { stack.push(JSON.parse(trimmed)); } catch (e) {}
+			}
+			continue;
+		}
+		if (Array.isArray(current)) {
+			for (const item of current) stack.push(item);
+			continue;
+		}
+		out.push(current);
+		if (current.result) stack.push(current.result);
+		if (current.Results) stack.push(current.Results);
+		if (current.data) stack.push(current.data);
+		if (current.period) stack.push(current.period);
+		if (current.batch) stack.push(current.batch);
+	}
+	return out;
+}
+
+function extractPeriodIdFromResponse(res: any): number | undefined {
+	const candidates = responseCandidates(res);
+	for (const candidate of candidates) {
+		const val = firstValidNumber([
+			candidate?.periodId,
+			candidate?.PeriodId,
+			candidate?.id,
+			candidate?.value,
+			candidate?.result?.periodId,
+			candidate?.result?.id,
+			candidate?.result?.value,
+			candidate?.result?.period?.periodId,
+			candidate?.period?.periodId,
+		]);
+		if (val) return val;
+	}
+	return undefined;
+}
+
+function extractBatchIdFromResponse(res: any): number | undefined {
+	const candidates = responseCandidates(res);
+	for (const candidate of candidates) {
+		const val = firstValidNumber([
+			candidate?.batchId,
+			candidate?.BatchId,
+			candidate?.id,
+			candidate?.value,
+			candidate?.result?.batchId,
+			candidate?.result?.id,
+			candidate?.batch?.batchId,
+		]);
+		if (val) return val;
+	}
+	return undefined;
+}
+
+function asPeriodCollection(data: any): any[] {
+	if (Array.isArray(data)) return data;
+	if (Array.isArray(data?.result)) return data.result;
+	if (Array.isArray(data?.periods)) return data.periods;
+	return [];
+}
+
+function buildPeriodPayload(periodName: string, facilityId?: number, dos?: string, username?: string) {
+	const now = new Date();
+	const rangeBase = baseDateFromDos(dos);
+	const begin = startOfMonthUtc(rangeBase);
+	const end = endOfMonthUtc(rangeBase);
+	return {
+		periodId: 0,
+		organizationId: facilityId ?? null,
+		periodName,
+		periodCreatedDate: iso(now),
+		periodClosedDate: null,
+		periodCreatorUsrId: 0,
+		openedBy: username || 'Ignition Seeder',
+		closedBy: null,
+		periodCloserUsrId: null,
+		periodBeginDate: iso(begin),
+		periodEndDate: iso(end),
+		isReadOnlyPeriodBatch: false,
+		resetClosedPeriodBatch: false,
+		moduleId: 2030,
+		sourceIdentifier: ZERO_GUID,
+	};
+}
+
+function buildBatchPayload(periodId: number, batchDescription: string, dos?: string) {
+	const now = new Date();
+	const rangeBase = baseDateFromDos(dos);
+	const begin = startOfMonthUtc(rangeBase);
+	const end = endOfMonthUtc(rangeBase);
+	return {
+		batchId: 0,
+		periodId,
+		batchDescription,
+		batchCreatedDate: iso(now),
+		batchClosedDate: null,
+		batchCreatorUsrId: 0,
+		batchCloserUsrId: null,
+		batchBeginDate: iso(begin),
+		batchEndDate: iso(end),
+		isActive: true,
+		openCases: 0,
+		sourceIdentifier: ZERO_GUID,
+	};
+}
+
+async function resolveSelectedPeriodBatch(opts: CreateBasicPatientsOptions, token: string): Promise<PeriodBatchContext> {
+	const periodId = firstValidNumber([opts.selectedPeriodId]);
+	const batchId = firstValidNumber([opts.selectedBatchId]);
+	if (!periodId || !batchId) throw new Error('Period and batch selection are required when using existing values.');
+	const response = await getPeriodBatches(token, opts.apiBaseUrl, opts.extraHeaders);
+	const periods = Array.isArray(response) ? response : [];
+	const matchById = (val: any, target: number) => {
+		const found = firstValidNumber([val?.periodId, val?.PeriodId, val?.id, val?.value, val?.periodId]);
+		return typeof found === 'number' && found === target;
+	};
+	const matchBatchById = (val: any, target: number) => {
+		const found = firstValidNumber([val?.batchId, val?.BatchId, val?.id, val?.value]);
+		return typeof found === 'number' && found === target;
+	};
+	const period = periods.find((p: any) => matchById(p, periodId));
+	if (!period) throw new Error(`Selected period (${periodId}) was not found on the API.`);
+	let batch: any = null;
+	if (Array.isArray(period.batches)) {
+		batch = period.batches.find((b: any) => matchBatchById(b, batchId));
+	}
+	if (!batch) {
+		const flat = periods.flatMap((p: any) => (Array.isArray(p.batches) ? p.batches : []));
+		batch = flat.find((b: any) => matchBatchById(b, batchId) && matchById({ periodId: b?.periodId ?? b?.PeriodId }, periodId))
+			|| flat.find((b: any) => matchBatchById(b, batchId));
+	}
+	if (!batch) throw new Error(`Selected batch (${batchId}) was not found on the API.`);
+	return {
+		periodId,
+		periodName: String(period.label ?? period.periodName ?? `Period${periodId}`),
+		batchId,
+		batchDescription: String(batch.batchDescription ?? batch.label ?? `Batch${batchId}`),
+	};
+}
+
+async function createNewPeriodBatch(opts: CreateBasicPatientsOptions, token: string, periodName: string, batchName: string): Promise<PeriodBatchContext> {
+	const periodPayload = buildPeriodPayload(periodName, opts.facilityId, opts.dos, opts.username);
+	const periodRes = await createPeriod(token, opts.apiBaseUrl, periodPayload, opts.extraHeaders);
+	let periodId = extractPeriodIdFromResponse(periodRes);
+	if (!periodId) {
+		const refreshed = asPeriodCollection(await getPeriodBatches(token, opts.apiBaseUrl, opts.extraHeaders));
+		const match = refreshed.find((p: any) => sameText(p?.periodName ?? p?.label, periodName));
+		periodId = firstValidNumber([match?.periodId, match?.PeriodId, match?.id, match?.value]);
+	}
+	if (!periodId) throw new Error('createPeriod response did not include a valid periodId.');
+	const batchPayload = buildBatchPayload(periodId, batchName, opts.dos);
+	const batchRes = await createBatch(token, opts.apiBaseUrl, batchPayload, opts.extraHeaders);
+	let batchId = extractBatchIdFromResponse(batchRes);
+	if (!batchId) {
+		const refreshedAgain = asPeriodCollection(await getPeriodBatches(token, opts.apiBaseUrl, opts.extraHeaders));
+		const parent = refreshedAgain.find((p: any) => {
+			const pid = firstValidNumber([p?.periodId, p?.PeriodId, p?.id, p?.value]);
+			return pid === periodId || sameText(p?.periodName ?? p?.label, periodName);
+		});
+		const batches = parent && Array.isArray(parent.batches) ? parent.batches : [];
+		const matchBatch = batches.find((b: any) => sameText(b?.batchDescription ?? b?.label, batchName));
+		batchId = firstValidNumber([matchBatch?.batchId, matchBatch?.BatchId, matchBatch?.id, matchBatch?.value]);
+	}
+	if (!batchId) throw new Error('createBatch response did not include a valid batchId.');
+	return {
+		periodId,
+		periodName,
+		batchId,
+		batchDescription: batchName,
+	};
+}
+
+async function resolvePeriodBatchContext(opts: CreateBasicPatientsOptions, token: string): Promise<PeriodBatchContext> {
+	const selectionMode: PeriodBatchMode = opts.mode === 'auto'
+		? 'auto'
+		: (opts.periodBatchMode === 'create' ? 'create' : 'select');
+	if (selectionMode === 'select') {
+		return resolveSelectedPeriodBatch(opts, token);
+	}
+	const suffix = selectionMode === 'auto' ? randomAutoSuffix() : sanitizeSuffix(opts.suffix);
+	if (!suffix) throw new Error('Suffix is required to create a new period and batch.');
+	const periodName = `Period${suffix}`;
+	const batchName = `Batch${suffix}`;
+	return createNewPeriodBatch(opts, token, periodName, batchName);
+}
 
 type GeneratedName = { firstName: string; lastName: string };
 
@@ -133,6 +378,9 @@ export type CreateBasicPatientsOptions = {
 	extraHeaders?: Record<string, string>;
     flowDepth?: number; // 0 create only,1 discharge,2 cases-to-code,3 charge entry
 	mode?: 'manual' | 'auto';
+	periodBatchMode?: PeriodBatchMode;
+	selectedPeriodId?: number;
+	selectedBatchId?: number;
 };
 
 export type CreateBasicPatientResult = {
@@ -198,6 +446,11 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 	const suffixValue = typeof suffix === 'string' ? suffix : '';
 	const isAutoMode = mode === 'auto';
 	if (!suffixValue && !isAutoMode) return { ok: false, error: 'suffix is required' };
+	const flowDepthValue = typeof opts.flowDepth === 'number' ? opts.flowDepth : 3;
+	let periodBatchOverride: PeriodBatchContext | undefined;
+	if (flowDepthValue >= 3) {
+		periodBatchOverride = await resolvePeriodBatchContext(opts, token);
+	}
 	const total = Number(count) || 1;
 	const maxConcurrency = Math.max(1, Math.min(Number(concurrency) || 8, 25));
 	const base = String(apiBaseUrl).replace(/\/$/, '');
@@ -299,7 +552,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 									try {
 										const passPatientId = (patientSource && patientSource.patientId) ? (patientSource.patientId as number) : thisPid;
 										const passCaseSummaryId = cs && (cs.caseSummaryId || cs.caseSummaryID || cs.caseSummaryId === 0) ? (cs.caseSummaryId ?? cs.caseSummaryID) : undefined;
-										const depth = (typeof opts.flowDepth === 'number' ? opts.flowDepth : 3);
+										const depth = flowDepthValue;
 										// depth >=1 => discharge
 										if (depth >= 1) {
 											// suppressed discharge flow debug log
@@ -308,7 +561,12 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 										// depth >=2 => cases-to-code; depth >=3 => include charge entry
 										if (passCaseSummaryId && depth >= 2) {
 											// suppressed cases-to-code debug log
-											await codingChargeEntry.performPatientCasesToCode(apiBaseUrl, String(passCaseSummaryId), token, logFn, { chargeEntry: depth >= 3, cptAmounts: (opts as any).cptAmounts, feeScheduleOverride: (opts as any).feeScheduleOverride });
+											await codingChargeEntry.performPatientCasesToCode(apiBaseUrl, String(passCaseSummaryId), token, logFn, {
+												chargeEntry: depth >= 3,
+												cptAmounts: (opts as any).cptAmounts,
+												feeScheduleOverride: (opts as any).feeScheduleOverride,
+												periodBatchOverride,
+											});
 										}
 									} catch (dfErr) {
 										// suppressed discharge flow error log
