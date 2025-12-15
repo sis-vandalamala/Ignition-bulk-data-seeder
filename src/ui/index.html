@@ -74,11 +74,13 @@
           <label class="field">Mode
             <select id="mode">
               <option value="manual">Manual</option>
+              <option value="auto">Auto</option>
             </select>
           </label>
         </div>
       </div>
 
+      <div id="manualModePanel">
       <div class="card" id="loginCard">
         <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
           <div style="font-weight:700">Login</div>
@@ -225,6 +227,89 @@
 
 
       <!-- Rooms removed (disabled while not used) -->
+
+      </div><!-- /manualModePanel -->
+
+      <div id="autoModePanel" style="display:none">
+        <div class="card" id="autoLoginCard">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:700">Auto Mode Login</div>
+          </div>
+          <div>
+            <div class="grid">
+              <div class="field">
+                <label>Facility Id</label>
+                <input id="autoFacilityId" type="number" placeholder="e.g. 2030" value="40" />
+              </div>
+              <div class="field" style="grid-column: span 3">
+                <label>Target API URL</label>
+                <input id="autoApiUrl" type="url" value="https://sisenterprise-api-324476e2-centralindia.siscompletedev.cloud/324476e2t1" placeholder="https://sisenterprise-api-324476e2-centralindia.siscompletedev.cloud/324476e2t1" />
+              </div>
+              <div class="field">
+                <label>Username</label>
+                <input id="autoUsername" type="text" placeholder="username" value="sisadmin" />
+              </div>
+              <div class="field">
+                <label>Password</label>
+                <input id="autoPassword" type="password" placeholder="password" value="Test#123" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="autoLoginBtn">Login</button>
+            </div>
+            <div class="hint">Authenticate before triggering automated runs.</div>
+          </div>
+        </div>
+
+        <div class="card" id="autoRunCard" style="display:none">
+          <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+            <div style="width:120px">
+              <div class="field">
+                <label>Count</label>
+                <input id="autoCount" type="number" min="1" value="1" />
+              </div>
+            </div>
+            <div style="width:150px">
+              <div class="field">
+                <label>Concurrency</label>
+                <input id="autoConcurrency" type="number" min="1" value="4" />
+                <div class="muted">Parallel API calls.</div>
+              </div>
+            </div>
+            <div style="flex:1;min-width:320px">
+              <div class="field">
+                <label>Workflow</label>
+                <input id="autoFlowDepth" type="range" min="0" max="3" step="1" value="3" style="width:100%;margin-top:4px" data-depth="3" />
+                <div class="flow-steps" id="autoFlowSteps">
+                  <div class="flow-step" data-step="0"><button type="button" class="dot"></button><span class="label">Create Case</span></div>
+                  <div class="flow-step" data-step="1"><button type="button" class="dot"></button><span class="label">Discharge</span></div>
+                  <div class="flow-step" data-step="2"><button type="button" class="dot"></button><span class="label">Cases to Code</span></div>
+                  <div class="flow-step" data-step="3"><button type="button" class="dot"></button><span class="label">Charge Entry</span></div>
+                </div>
+                <div id="autoFlowDepthLabel" class="flow-label" data-depth="3" style="margin-top:12px">Full: Charge Entry</div>
+              </div>
+            </div>
+          </div>
+          <div class="actions" style="margin-top:16px">
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px">
+                <div id="autoRunProgressWrap" style="width:60%;min-width:220px;display:none;flex-direction:column;align-items:center;">
+                  <div style="width:100%;height:10px;background:var(--trackBg);border-radius:999px;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,0.03)">
+                    <div id="autoRunProgressFill" style="width:0%;height:100%;background:var(--trackFill);transition:width 300ms linear"></div>
+                  </div>
+                  <div id="autoRunProgressLabel" style="font-size:12px;color:var(--muted);margin-top:6px;">Idle</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <button id="autoRunBtn">Run</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+
+
 
     </div>
 

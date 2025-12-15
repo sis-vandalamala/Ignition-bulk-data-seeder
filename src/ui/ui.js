@@ -1,89 +1,44 @@
 (()=>{
   const $ = id => document.getElementById(id);
   const mode = $('mode');
+  const manualPanel = $('manualModePanel');
+  const autoPanel = $('autoModePanel');
   const facilityId = $('facilityId');
   const apiUrl = $('apiUrl');
   const username = $('username');
   const password = $('password');
+  const autoFacilityId = $('autoFacilityId');
+  const autoApiUrl = $('autoApiUrl');
+  const autoUsername = $('autoUsername');
+  const autoPassword = $('autoPassword');
   const loginBtn = $('loginBtn');
   const loginCard = $('loginCard');
   const loginCardBody = $('loginCardBody');
   const loginCollapseBtn = $('loginCollapseBtn');
   const loginCollapseIcon = $('loginCollapseIcon');
   const loginCollapseLabel = $('loginCollapseLabel');
-  // logout button removed
+  const autoLoginBtn = $('autoLoginBtn');
   const suffix = $('suffix');
   const count = $('count');
   const concurrency = $('concurrency');
+  const autoCount = $('autoCount');
+  const autoConcurrency = $('autoConcurrency');
   const roomSelect = $('roomSelect');
   const apptTypeSelect = $('apptTypeSelect');
   const physicianSelect = $('physicianSelect');
   const cptSelect = $('cptSelect');
   const dosInput = $('dos');
-  // Bind default Date of Service to today's date (YYYY-MM-DD) if not already set
-  if (dosInput && !dosInput.value) {
-    try {
-      const now = new Date();
-      const yyyy = now.getFullYear();
-      const mm = String(now.getMonth() + 1).padStart(2, '0');
-      const dd = String(now.getDate()).padStart(2, '0');
-      dosInput.value = `${yyyy}-${mm}-${dd}`;
-    } catch (e) { /* ignore */ }
-  }
-  // in-list floating search will be created dynamically on focus/click
   const runBtn = $('runBtn');
+  const autoRunBtn = $('autoRunBtn');
   const logoEl = document.querySelector('.logo');
   const pwdToggle = document.getElementById('pwdToggle');
-  // workflow depth slider (0 create,1 discharge,2 cases-to-code,3 charge entry)
   const flowDepth = $('flowDepth');
   const flowDepthLabel = $('flowDepthLabel');
   const flowSteps = $('flowSteps');
-  function updateFlowDepthLabel(){
-    if (!flowDepth || !flowDepthLabel) return;
-    const v = Number(flowDepth.value);
-    let txt = '';
-    if (v===0) txt = 'Create only (patient + case summary)';
-    else if (v===1) txt = 'Through Discharge';
-    else if (v===2) txt = 'Through Cases-to-Code (no charge entry)';
-    else txt = 'Full: Charge Entry';
-    flowDepthLabel.textContent = txt;
-    try { flowDepthLabel.dataset.depth = String(v); } catch (e) {}
-    try { flowDepth.dataset.depth = String(v); } catch (e) {}
-    // Single-color progress fill (accent1) up to current depth
-    try {
-      const pct = Math.min(100, Math.max(0, (v/3)*100));
-      flowDepth.style.background = `linear-gradient(90deg, var(--trackFill) 0%, var(--trackFill) ${pct}%, var(--trackBg) ${pct}%)`;
-    } catch (e) {}
-    // update step dots
-    if (flowSteps){
-      const children = flowSteps.querySelectorAll('.flow-step');
-      children.forEach(el => {
-        const step = Number(el.getAttribute('data-step'));
-        el.classList.remove('active','completed','final');
-        if (step === v) el.classList.add('active');
-        if (step < v) el.classList.add('completed');
-        if (v === 3 && step === 3) el.classList.add('final');
-      });
-    }
-  }
-  if (flowDepth) flowDepth.addEventListener('input', updateFlowDepthLabel);
-  // Allow clicking dots to set depth
-  if (flowSteps){
-    flowSteps.addEventListener('click', (e) => {
-      const target = e.target.closest('.flow-step');
-      if (!target) return;
-      const step = Number(target.getAttribute('data-step'));
-      if (flowDepth){ flowDepth.value = String(step); updateFlowDepthLabel(); }
-    });
-  }
-  updateFlowDepthLabel();
-
-  let token = null;
-  // cached option data for search filtering
-  let _cachedRooms = null;
-  let _cachedAppts = null;
-  let _cachedPhysicians = null;
-  let _cachedCPTs = null;
+  const autoFlowDepth = $('autoFlowDepth');
+  const autoFlowDepthLabel = $('autoFlowDepthLabel');
+  const autoFlowSteps = $('autoFlowSteps');
+  const autoRunCard = $('autoRunCard');
   const logEl = document.getElementById('logCard');
   const logTableBody = document.getElementById('logTableBody');
   const logFilter = document.getElementById('logFilter');
@@ -94,6 +49,131 @@
   const runProgressFill = document.getElementById('runProgressFill');
   const runProgressLabel = document.getElementById('runProgressLabel');
   const runProgressWrap = document.getElementById('runProgressWrap');
+  const autoRunProgressFill = document.getElementById('autoRunProgressFill');
+  const autoRunProgressLabel = document.getElementById('autoRunProgressLabel');
+  const autoRunProgressWrap = document.getElementById('autoRunProgressWrap');
+
+  // Bind default Date of Service to today's date (YYYY-MM-DD) if not already set
+  if (dosInput && !dosInput.value) {
+    try {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      dosInput.value = `${yyyy}-${mm}-${dd}`;
+    } catch (e) { /* ignore */ }
+  }
+
+  function syncModePanels(){
+    const current = mode ? mode.value : 'manual';
+    if (manualPanel) manualPanel.style.display = current === 'manual' ? '' : 'none';
+    if (autoPanel) autoPanel.style.display = current === 'auto' ? '' : 'none';
+  }
+  syncModePanels();
+  if (mode) mode.addEventListener('change', syncModePanels);
+
+  function initFlowDepthControls(inputEl, labelEl, stepsEl){
+    if (!inputEl || !labelEl) return;
+    const update = () => {
+      const v = Number(inputEl.value);
+      let txt = '';
+      if (v===0) txt = 'Create only (patient + case summary)';
+      else if (v===1) txt = 'Through Discharge';
+      else if (v===2) txt = 'Through Cases-to-Code (no charge entry)';
+      else txt = 'Full: Charge Entry';
+      labelEl.textContent = txt;
+      try { labelEl.dataset.depth = String(v); } catch (e) {}
+      try { inputEl.dataset.depth = String(v); } catch (e) {}
+      try {
+        const pct = Math.min(100, Math.max(0, (v/3)*100));
+        inputEl.style.background = `linear-gradient(90deg, var(--trackFill) 0%, var(--trackFill) ${pct}%, var(--trackBg) ${pct}%)`;
+      } catch (e) {}
+      if (stepsEl){
+        const children = stepsEl.querySelectorAll('.flow-step');
+        children.forEach(el => {
+          const step = Number(el.getAttribute('data-step'));
+          el.classList.remove('active','completed','final');
+          if (step === v) el.classList.add('active');
+          if (step < v) el.classList.add('completed');
+          if (v === 3 && step === 3) el.classList.add('final');
+        });
+      }
+    };
+    inputEl.addEventListener('input', update);
+    if (stepsEl){
+      stepsEl.addEventListener('click', (e) => {
+        const target = e.target.closest('.flow-step');
+        if (!target) return;
+        const step = Number(target.getAttribute('data-step'));
+        inputEl.value = String(step);
+        update();
+      });
+    }
+    update();
+  }
+  initFlowDepthControls(flowDepth, flowDepthLabel, flowSteps);
+  initFlowDepthControls(autoFlowDepth, autoFlowDepthLabel, autoFlowSteps);
+
+  function createProgressController(parts = {}){
+    const { wrap, fill, label } = parts;
+    let timer = null;
+    let pct = 0;
+    let finalized = false;
+    const clamp = (val) => Math.max(0, Math.min(100, Number(val) || 0));
+    return {
+      show(){ if (wrap) wrap.style.display = ''; },
+      hide(){ if (wrap) wrap.style.display = 'none'; },
+      reset(text){
+        this.stop();
+        finalized = false;
+        this.setPercent(0, text || 'Idle');
+      },
+      setPercent(value, text){
+        pct = clamp(value);
+        if (fill) fill.style.width = pct + '%';
+        if (!finalized && label) label.textContent = text || (pct === 0 ? 'Idle' : `${pct}%`);
+      },
+      animate(){
+        this.stop();
+        let v = 0;
+        timer = setInterval(() => {
+          v = (v + 7) % 100;
+          this.setPercent(v, 'Running...');
+        }, 250);
+      },
+      stop(){
+        if (timer) clearInterval(timer);
+        timer = null;
+      },
+      setStatus(result, pctOverride){
+        if (!label) return;
+        const effective = clamp(typeof pctOverride === 'number' ? pctOverride : pct);
+        if (result === 'pass') {
+          finalized = true;
+          label.textContent = `${effective}% · Successful`;
+        } else if (result === 'fail') {
+          finalized = true;
+          label.textContent = `${effective}% · Failed`;
+        } else {
+          finalized = false;
+          label.textContent = `${effective}%`;
+        }
+      },
+      getPercent(){ return pct; }
+    };
+  }
+
+  const progressControllers = {
+    manual: createProgressController({ wrap: runProgressWrap, fill: runProgressFill, label: runProgressLabel }),
+    auto: createProgressController({ wrap: autoRunProgressWrap, fill: autoRunProgressFill, label: autoRunProgressLabel })
+  };
+
+  let token = null;
+  // cached option data for search filtering
+  let _cachedRooms = null;
+  let _cachedAppts = null;
+  let _cachedPhysicians = null;
+  let _cachedCPTs = null;
   function renderTable(){
     if (!logTableBody) return;
     const q = (logFilter && logFilter.value ? logFilter.value.toLowerCase() : '').trim();
@@ -134,53 +214,6 @@
     }).join('');
   }
 
-  // Progress helpers
-  let _animTimer = null;
-  let _currentPct = 0;
-  let _finalized = false;
-  function setProgressPercent(pct, text) {
-    try {
-      const clamped = Math.max(0, Math.min(100, Number(pct) || 0));
-      _currentPct = clamped;
-      if (runProgressFill) runProgressFill.style.width = clamped + '%';
-      // do not overwrite final status text once finalized
-      if (!(_finalized)) {
-        if (runProgressLabel) runProgressLabel.textContent = text || (clamped === 0 ? 'Idle' : `${clamped}%`);
-      }
-    } catch (e) {}
-  }
-
-  function animateIndeterminate() {
-    // simple looping progress animation while waiting for server
-    let v = 0;
-    clearInterval(_animTimer);
-    _animTimer = setInterval(() => {
-      v = (v + 7) % 100;
-      setProgressPercent(v, 'Running...');
-    }, 250);
-  }
-
-  function stopIndeterminate() {
-    try { clearInterval(_animTimer); _animTimer = null; } catch (e) {}
-  }
-
-  function setStatusResult(result, pct) {
-    try {
-      if (!runProgressLabel) return;
-      const effectivePct = (typeof pct === 'number') ? Math.max(0, Math.min(100, Math.round(pct))) : Math.max(0, Math.min(100, Math.round(_currentPct || 0)));
-      if (result === 'pass') {
-        _finalized = true;
-        runProgressLabel.textContent = `${effectivePct}% · Successful`;
-      } else if (result === 'fail') {
-        _finalized = true;
-        runProgressLabel.textContent = `${effectivePct}% · Failed`;
-      } else {
-        _finalized = false;
-        runProgressLabel.textContent = `${effectivePct}%`;
-      }
-    } catch (e) {}
-  }
-
   function filterSelectBySearch(searchEl, selectEl, cachedRows, makeLabel, makeValue) {
     if (!selectEl) return;
     const q = (searchEl && searchEl.value) ? String(searchEl.value).toLowerCase().trim() : '';
@@ -209,6 +242,8 @@
     let polls = 0;
     let finished = false;
     let lastCount = 0;
+    const progressCtrl = opts.progressCtrl;
+    const totalCount = Number(opts.totalCount) || 1;
     while (!finished && polls < maxPolls) {
       polls += 1;
       try {
@@ -243,13 +278,12 @@
 
         // update percent if provided
         try {
-          if (typeof j2.completedCount === 'number' && typeof count !== 'undefined') {
-            const total = Number(count && count.value ? count.value : 1) || 1;
+          if (progressCtrl && typeof j2.completedCount === 'number') {
             const done = Number(j2.completedCount || 0);
-            const pct = Math.round(Math.min(100, (done / Math.max(1, total)) * 100));
-            setProgressPercent(pct, `${pct}%`);
-          } else if (typeof j2.percent === 'number') {
-            setProgressPercent(j2.percent, `${Math.round(j2.percent)}%`);
+            const pct = Math.round(Math.min(100, (done / Math.max(1, totalCount)) * 100));
+            progressCtrl.setPercent(pct, `${pct}%`);
+          } else if (progressCtrl && typeof j2.percent === 'number') {
+            progressCtrl.setPercent(j2.percent, `${Math.round(j2.percent)}%`);
           }
         } catch (e) {}
 
@@ -266,6 +300,123 @@
     }
     // timed out; return empty object with runId
     return { runId, ok: false, finished: false };
+  }
+
+  async function executeSeedRun({ payload, progressCtrl, totalCount }) {
+    const ctrl = progressCtrl || progressControllers.manual;
+    const targetTotal = Number(totalCount) || Number(payload?.opts?.count) || 1;
+    try { if (logoEl) logoEl.classList.add('running'); } catch (e) {}
+    try { if (elapsedEl) elapsedEl.textContent = 'Total: 0.00s'; } catch (e) {}
+    if (ctrl) {
+      ctrl.show();
+      ctrl.reset('Starting...');
+    }
+    log('Sending seed request: ' + JSON.stringify(payload));
+    if (ctrl) ctrl.animate();
+    let j = null;
+    try {
+      const res = await fetch('/seed', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
+      try { j = await res.json(); } catch (e) { j = { ok: false, error: 'invalid-json' }; }
+    } catch (e) {
+      j = { ok: false, error: String(e) };
+    }
+    if (ctrl) ctrl.stop();
+    try { if (logoEl) logoEl.classList.remove('running'); } catch (e) {}
+    log('Seed response: ' + JSON.stringify(j));
+    let finalResp = j;
+    try {
+      if (j && j.runId) {
+        const polled = await pollRunStatus(j.runId, { intervalMs: 800, maxPolls: 900, progressCtrl: ctrl, totalCount: targetTotal });
+        if (polled && typeof polled === 'object') {
+          finalResp = Object.assign({}, j, polled);
+        }
+      }
+    } catch (e) {
+      // ignore polling errors and fall back to original response
+    }
+
+    try {
+      if (elapsedEl && finalResp) {
+        if (typeof finalResp.runElapsedMs === 'number') {
+          const s = (finalResp.runElapsedMs/1000).toFixed(2);
+          elapsedEl.textContent = `Total: ${s}s`;
+        } else if (Array.isArray(finalResp.logs) && finalResp.logs.length) {
+          let sumMs = 0;
+          let minStart = Number.MAX_SAFE_INTEGER;
+          let maxEnd = 0;
+          finalResp.logs.forEach(it => {
+            const d = Number(it.durationMs) || 0;
+            sumMs += d;
+            const ts = it.timestamp ? Date.parse(it.timestamp) : NaN;
+            if (!Number.isNaN(ts)) {
+              minStart = Math.min(minStart, ts);
+              maxEnd = Math.max(maxEnd, ts + d);
+            }
+          });
+          const wallMs = (minStart === Number.MAX_SAFE_INTEGER) ? sumMs : Math.max(0, maxEnd - minStart);
+          const wallS = (wallMs / 1000).toFixed(2);
+          const sumS = (sumMs / 1000).toFixed(2);
+          elapsedEl.textContent = `Wall: ${wallS}s · Sum: ${sumS}s`;
+        }
+      }
+    } catch (e) { log('elapsed calc error'); }
+
+    try {
+      if (finalResp && Array.isArray(finalResp.logs)) {
+        log('--- API Call Logs ---');
+        finalResp.logs.forEach(l => {
+          try {
+            const when = formatTime(l.startTime || l.timestamp);
+            const status = l.status || (l.error ? 'error' : 'unknown');
+            const dur = Number(l.durationMs || 0);
+            const dsec = (dur/1000).toFixed(2)+'s';
+            logBuffer.unshift({ time: when, method: l.method, url: l.url, status, duration: dsec });
+          } catch (e) { /* ignore per-log parse error */ }
+        });
+        let failureCount = 0;
+        try {
+          const total = targetTotal || (finalResp.logs.length || 1);
+          failureCount = (finalResp.logs || []).reduce((acc, it) => {
+            try {
+              const st = it.status || (it.error ? 'error' : undefined);
+              if (st === undefined || st === null) return acc;
+              if (typeof st === 'number') return acc + (st >= 400 ? 1 : 0);
+              const s = String(st).toLowerCase().trim();
+              if (s === 'error') return acc + 1;
+              if (/^\d+$/.test(s)) return acc + (Number(s) >= 400 ? 1 : 0);
+              if (s.startsWith('4') || s.startsWith('5')) return acc + 1;
+              return acc;
+            } catch (e) { return acc; }
+          }, 0);
+          const done = (finalResp._completedCount != null) ? Number(finalResp._completedCount) : (finalResp.logs.length || 0);
+          const pct = Math.round(Math.min(100, (done / Math.max(1,total)) * 100));
+          if (ctrl) ctrl.setPercent(pct, `${pct}%`);
+        } catch (e) { /* ignore progress calc error */ }
+        renderTable();
+        if (ctrl) {
+          if (failureCount > 0) {
+            ctrl.setPercent(100, 'Completed');
+            ctrl.setStatus('fail', ctrl.getPercent());
+          } else if (finalResp && finalResp.ok) {
+            ctrl.setPercent(100, 'Completed');
+            ctrl.setStatus('pass', 100);
+          } else {
+            ctrl.setPercent(100, 'Completed');
+            ctrl.setStatus('fail', 100);
+          }
+        }
+      } else if (ctrl) {
+        if (finalResp && finalResp.ok) {
+          ctrl.setPercent(100, 'Completed');
+          ctrl.setStatus('pass', 100);
+        } else {
+          ctrl.setPercent(100, 'Completed');
+          ctrl.setStatus('fail', 100);
+        }
+      }
+    } catch (e) {
+      if (ctrl) ctrl.setStatus('fail', ctrl.getPercent());
+    }
   }
 
   // Create a custom dropdown that embeds a search input as the first element inside the dropdown panel.
@@ -740,6 +891,35 @@
     }
   });
 
+  if (autoLoginBtn) {
+    autoLoginBtn.addEventListener('click', async () => {
+      // Keep logs in sync with login attempts
+      logBuffer.splice(0, logBuffer.length);
+      renderTable();
+      const res = await fetch('/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: autoUsername?.value, password: autoPassword?.value, facilityId: Number(autoFacilityId?.value), apiUrl: autoApiUrl?.value }) });
+      let j = null;
+      try { j = await res.json(); } catch (e) { j = null; }
+      if (j && j.ok && j.token) {
+        token = j.token;
+        if (autoRunCard) autoRunCard.style.display = '';
+      } else {
+        if (autoRunCard) autoRunCard.style.display = 'none';
+      }
+      if (j && Array.isArray(j.logs)) {
+        j.logs.forEach(l => {
+          try {
+            const when = formatTime(l.startTime || l.timestamp);
+            const status = l.status || (l.error ? 'error' : 'unknown');
+            const dur = Number(l.durationMs || 0);
+            const dsec = (dur/1000).toFixed(2)+'s';
+            logBuffer.unshift({ time: when, method: l.method, url: l.url, status, duration: dsec });
+          } catch (e) { /* ignore per-log parse error */ }
+        });
+        renderTable();
+      }
+    });
+  }
+
   // logout removed — token is kept in-memory until page reload
 
   if (loginCollapseBtn) {
@@ -782,15 +962,6 @@
   }
 
   runBtn.addEventListener('click', async () => {
-    try { if (logoEl) logoEl.classList.add('running'); } catch (e) {}
-    // reset elapsed display for this run (seconds)
-    try { if (elapsedEl) elapsedEl.textContent = 'Total: 0.00s'; } catch (e) {}
-    // reset progress and result
-    stopIndeterminate(); setProgressPercent(0, 'Starting...'); setStatusResult(null);
-    // show progress wrapper when Run clicked
-    try { if (runProgressWrap) runProgressWrap.style.display = ''; } catch (e) {}
-    // ensure label doesn't show old result
-    try { if (runProgressLabel) runProgressLabel.textContent = 'Starting...'; } catch (e) {}
     // Gather selected labels for room, appointment type, physician
     const selRoomId = roomSelect && roomSelect.value ? Number(roomSelect.value) : undefined;
     const selRoomName = (roomSelect && roomSelect.selectedOptions && roomSelect.selectedOptions[0]) ? roomSelect.selectedOptions[0].textContent : undefined;
@@ -891,119 +1062,35 @@
         , flowDepth: flowDepth ? Number(flowDepth.value) : 3
       }
     };
-    log('Sending seed request: ' + JSON.stringify(payload));
-    // start indeterminate animation until server responds
-    animateIndeterminate();
-    let j = null;
-    
-    try {
-      const res = await fetch('/seed', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
-      try { j = await res.json(); } catch (e) { j = { ok: false, error: 'invalid-json' }; }
-    } catch (e) {
-      j = { ok: false, error: String(e) };
-    }
-    stopIndeterminate();
-    try { if (logoEl) logoEl.classList.remove('running'); } catch (e) {}
-    log('Seed response: ' + JSON.stringify(j));
-    // If server returned a runId, poll for incremental logs/status and merge them live
-    let finalResp = j;
-    try {
-      if (j && j.runId) {
-        // start polling and merge results — pollRunStatus returns final combined object
-        const polled = await pollRunStatus(j.runId, { intervalMs: 800, maxPolls: 900 });
-        if (polled && typeof polled === 'object') {
-          finalResp = Object.assign({}, j, polled);
-        }
-      }
-    } catch (e) {
-      // ignore polling errors and fall back to original response
-    }
-    // compute and show total elapsed time from logs (sum of durationMs)
-    try {
-      try {
-        if (elapsedEl && finalResp) {
-          if (typeof finalResp.runElapsedMs === 'number') {
-            const s = (finalResp.runElapsedMs/1000).toFixed(2);
-            elapsedEl.textContent = `Total: ${s}s`;
-          } else if (Array.isArray(finalResp.logs) && finalResp.logs.length) {
-            // sum of durations (aggregate) and wall-clock elapsed (earliest start to latest end)
-            let sumMs = 0;
-            let minStart = Number.MAX_SAFE_INTEGER;
-            let maxEnd = 0;
-            finalResp.logs.forEach(it => {
-              const d = Number(it.durationMs) || 0;
-              sumMs += d;
-              const ts = it.timestamp ? Date.parse(it.timestamp) : NaN;
-              if (!Number.isNaN(ts)) {
-                minStart = Math.min(minStart, ts);
-                maxEnd = Math.max(maxEnd, ts + d);
-              }
-            });
-            const wallMs = (minStart === Number.MAX_SAFE_INTEGER) ? sumMs : Math.max(0, maxEnd - minStart);
-            const wallS = (wallMs / 1000).toFixed(2);
-            const sumS = (sumMs / 1000).toFixed(2);
-            elapsedEl.textContent = `Wall: ${wallS}s · Sum: ${sumS}s`;
-          }
-        }
-      } catch (e) { log('elapsed calc error'); }
-
-      // merge all logs into the UI buffer (most recent first)
-      if (finalResp && Array.isArray(finalResp.logs)) {
-        log('--- API Call Logs ---');
-        finalResp.logs.forEach(l => {
-          try {
-            const when = formatTime(l.startTime || l.timestamp);
-            const status = l.status || (l.error ? 'error' : 'unknown');
-            const dur = Number(l.durationMs || 0);
-            const dsec = (dur/1000).toFixed(2)+'s';
-            logBuffer.unshift({ time: when, method: l.method, url: l.url, status, duration: dsec });
-          } catch (e) { /* ignore per-log parse error */ }
-        });
-        // compute a simple progress percent and failure count
-        let failureCount = 0;
-        try {
-          const total = Number(count && count.value ? count.value : (finalResp.logs.length || 1)) || 1;
-          // count failures conservatively
-          failureCount = (finalResp.logs || []).reduce((acc, it) => {
-            try {
-              const st = it.status || (it.error ? 'error' : undefined);
-              if (st === undefined || st === null) return acc;
-              if (typeof st === 'number') return acc + (st >= 400 ? 1 : 0);
-              const s = String(st).toLowerCase().trim();
-              if (s === 'error') return acc + 1;
-              if (/^\d+$/.test(s)) return acc + (Number(s) >= 400 ? 1 : 0);
-              if (s.startsWith('4') || s.startsWith('5')) return acc + 1;
-              return acc;
-            } catch (e) { return acc; }
-          }, 0);
-          const done = (finalResp._completedCount != null) ? Number(finalResp._completedCount) : (finalResp.logs.length || 0);
-          const pct = Math.round(Math.min(100, (done / Math.max(1,total)) * 100));
-          setProgressPercent(pct, `${pct}%`);
-        } catch (e) { /* ignore progress calc error */ }
-        renderTable();
-        // decide final status
-        if (failureCount > 0) {
-          setProgressPercent(100, 'Completed');
-          setStatusResult('fail', _currentPct);
-        } else if (finalResp && finalResp.ok) {
-          setProgressPercent(100, 'Completed');
-          setStatusResult('pass', 100);
-        } else {
-          setProgressPercent(100, 'Completed');
-          setStatusResult('fail', 100);
-        }
-      } else {
-        // no logs — fallback to j.ok
-        if (finalResp && finalResp.ok) {
-          setProgressPercent(100, 'Completed');
-          setStatusResult('pass', 100);
-        } else {
-          setProgressPercent(100, 'Completed');
-          setStatusResult('fail', 100);
-        }
-      }
-    } catch (e) { setStatusResult('fail', _currentPct); }
+    await executeSeedRun({
+      payload,
+      progressCtrl: progressControllers.manual,
+      totalCount: Number(count && count.value ? count.value : 1) || 1
+    });
   });
+
+  if (autoRunBtn) {
+    autoRunBtn.addEventListener('click', async () => {
+      const payload = {
+        opts: {
+          action: 'createBasicPatients',
+          mode: 'auto',
+          count: Number(autoCount && autoCount.value ? autoCount.value : 1) || 1,
+          concurrency: Number(autoConcurrency && autoConcurrency.value ? autoConcurrency.value : 0) || undefined,
+          apiUrl: autoApiUrl ? autoApiUrl.value : '',
+          facilityId: autoFacilityId && autoFacilityId.value ? Number(autoFacilityId.value) : undefined,
+          username: autoUsername ? autoUsername.value : '',
+          password: autoPassword ? autoPassword.value : '',
+          flowDepth: autoFlowDepth ? Number(autoFlowDepth.value) : undefined
+        }
+      };
+      await executeSeedRun({
+        payload,
+        progressCtrl: progressControllers.auto,
+        totalCount: Number(autoCount && autoCount.value ? autoCount.value : 1) || 1
+      });
+    });
+  }
 
   // Progress UI removed
 })();
