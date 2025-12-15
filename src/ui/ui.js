@@ -27,6 +27,12 @@
   const apptTypeSelect = $('apptTypeSelect');
   const physicianSelect = $('physicianSelect');
   const cptSelect = $('cptSelect');
+  const periodBatchSelect = document.getElementById('periodBatchSelect');
+  const periodBatchCreate = document.getElementById('periodBatchCreate');
+  const periodSelectWrap = document.getElementById('periodSelectWrap');
+  const batchSelectWrap = document.getElementById('batchSelectWrap');
+  const periodSelect = document.getElementById('periodSelect');
+  const batchSelect = document.getElementById('batchSelect');
   const dosInput = $('dos');
   const runBtn = $('runBtn');
   const autoRunBtn = $('autoRunBtn');
@@ -331,6 +337,18 @@
           finalResp = Object.assign({}, j, polled);
         }
       }
+            if (sup.periods && Array.isArray(sup.periods) && periodSelect) {
+              try {
+                periodSelect.innerHTML = sup.periods.map(p => `<option value="${p.id ?? p.periodId ?? p.value}">${p.name ?? p.label ?? JSON.stringify(p)}</option>`).join('');
+                if (periodSelect.options && periodSelect.options.length) periodSelect.selectedIndex = 0;
+              } catch (e) { /* ignore */ }
+            }
+            if (sup.batches && Array.isArray(sup.batches) && batchSelect) {
+              try {
+                batchSelect.innerHTML = sup.batches.map(b => `<option value="${b.id ?? b.batchId ?? b.value}">${b.name ?? b.label ?? JSON.stringify(b)}</option>`).join('');
+                if (batchSelect.options && batchSelect.options.length) batchSelect.selectedIndex = 0;
+              } catch (e) { /* ignore */ }
+            }
     } catch (e) {
       // ignore polling errors and fall back to original response
     }
@@ -730,6 +748,21 @@
   // initialize custom multi-select for CPT
   createCustomMultiDropdown(cptSelect, () => _cachedCPTs, fs => ((fs?.cptProcedure?.cptCode ?? fs?.cptCode ?? fs?.code ?? '') + (fs?.cptProcedure?.cptDescription ? (' — ' + fs.cptProcedure.cptDescription) : '')), fs => (fs?.cptProcedure?.cptProcedureId ?? fs?.cptProcedureId ?? fs?.id ?? ''));
 
+  // helper to toggle visibility of Period/Batch selects
+  function updatePeriodBatchVisibility() {
+    try {
+      const sel = document.querySelector('input[name="periodBatch"]:checked');
+      const showSelects = sel && sel.value === 'select';
+      if (periodSelectWrap) periodSelectWrap.style.display = showSelects ? '' : 'none';
+      if (batchSelectWrap) batchSelectWrap.style.display = showSelects ? '' : 'none';
+    } catch (e) { /* ignore */ }
+  }
+  // attach listeners to radio buttons
+  try { if (periodBatchSelect) periodBatchSelect.addEventListener('change', updatePeriodBatchVisibility); } catch (e) {}
+  try { if (periodBatchCreate) periodBatchCreate.addEventListener('change', updatePeriodBatchVisibility); } catch (e) {}
+  // initial visibility
+  updatePeriodBatchVisibility();
+
   function log(msg){ /* deprecated: keep for rare notes, but do not add to table to avoid noise */ }
 
   if (logFilter) logFilter.addEventListener('input', renderTable);
@@ -1059,6 +1092,9 @@
             } catch (e) { return fs; }
           })
         , cptAmounts: cptAmounts
+        , periodBatch: (() => { try { const sel = document.querySelector('input[name="periodBatch"]:checked'); return sel ? sel.value : 'select'; } catch (e) { return 'select' } })()
+        , periodId: (() => { try { return periodSelect && periodSelect.value ? periodSelect.value : undefined; } catch (e) { return undefined } })()
+        , batchId: (() => { try { return batchSelect && batchSelect.value ? batchSelect.value : undefined; } catch (e) { return undefined } })()
         , flowDepth: flowDepth ? Number(flowDepth.value) : 3
       }
     };

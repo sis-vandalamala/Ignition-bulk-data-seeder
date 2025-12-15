@@ -171,6 +171,31 @@
               <div class="muted" style="font-size:12px;margin-top:6px">Use the search and checkboxes to select multiple codes.</div>
             </div>
           </div>
+          <div class="support-field-wrap">
+            <div class="field">
+              <label>Period/Batch</label>
+              <div style="display:flex;gap:12px;align-items:center;margin-top:6px">
+                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="periodBatch" id="periodBatchSelect" value="select" checked /> Select</label>
+                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="periodBatch" id="periodBatchCreate" value="create" /> Create New</label>
+              </div>
+            </div>
+          </div>
+          <div class="support-field-wrap" id="periodSelectWrap" style="display:none">
+            <div class="field">
+              <label>Period</label>
+              <select id="periodSelect">
+                <option value="" disabled selected>Loading...</option>
+              </select>
+            </div>
+          </div>
+          <div class="support-field-wrap" id="batchSelectWrap" style="display:none">
+            <div class="field">
+              <label>Batch</label>
+              <select id="batchSelect">
+                <option value="" disabled selected>Loading...</option>
+              </select>
+            </div>
+          </div>
         </div>
       </div>
       
