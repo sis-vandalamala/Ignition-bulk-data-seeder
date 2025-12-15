@@ -146,28 +146,28 @@ app.post('/support-data', async (req, res) => {
 			try {
 				try {
 					rooms = await getRoomsForOrganization(token as any, apiUrl);
-					try { console.log('[support-data] rooms fetched, count=', Array.isArray(rooms) ? rooms.length : 'obj'); } catch (e) {}
-				} catch (e: any) { console.error('[support-data] getRoomsForOrganization error', e && e.message ? e.message : e); }
+					// suppressed support-data rooms fetched log
+				} catch (e: any) { /* suppressed getRoomsForOrganization error */ }
 
 				try {
 					appointmentTypes = await getAppointmentTypeNameAndID(token as any, apiUrl);
-					try { console.log('[support-data] appointmentTypes fetched, count=', Array.isArray(appointmentTypes) ? appointmentTypes.length : 'obj'); } catch (e) {}
-				} catch (e: any) { console.error('[support-data] getAppointmentTypeNameAndID error', e && e.message ? e.message : e); }
+					// suppressed support-data appointmentTypes fetched log
+				} catch (e: any) { /* suppressed getAppointmentTypeNameAndID error */ }
 
 				try {
 					physicians = await getPhysicianNameAndID(token as any, apiUrl, Number(facilityId), false);
-					try { console.log('[support-data] physicians fetched, count=', Array.isArray(physicians) ? physicians.length : 'obj'); } catch (e) {}
-				} catch (e: any) { console.error('[support-data] getPhysicianNameAndID error', e && e.message ? e.message : e); }
+					// suppressed support-data physicians fetched log
+				} catch (e: any) { /* suppressed getPhysicianNameAndID error */ }
 
 					try {
 						// Fetch fee schedules (CPT catalog) so UI can populate CPT dropdown
 						const feeSchedule = await getFeeSchedules(token as any, apiUrl);
-						try { console.log('[support-data] feeSchedule fetched, count=', Array.isArray(feeSchedule) ? feeSchedule.length : 'obj'); } catch (e) {}
+						// suppressed support-data feeSchedule fetched log
 						// attach to response container
 						(physicians as any).__feeSchedule = feeSchedule; // keep local reference (not used elsewhere)
-					} catch (e: any) { console.error('[support-data] getFeeSchedules error', e && e.message ? e.message : e); }
+					} catch (e: any) { /* suppressed getFeeSchedules error */ }
 
-					try { console.log('[support-data] captured logs:', logs.length); if (logs.length) console.log('[support-data] sample log:', logs[0]); } catch (e) {}
+					// suppressed support-data captured logs output
 					// include feeSchedule if available (stored on physicians.__feeSchedule above)
 					const feeSchedule = (physicians as any && (physicians as any).__feeSchedule) ? (physicians as any).__feeSchedule : undefined;
 					return res.json({ ok: true, rooms, appointmentTypes, physicians, feeSchedule, logs });

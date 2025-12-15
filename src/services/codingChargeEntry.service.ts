@@ -96,13 +96,13 @@ export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryI
   try {
     if (typeof resp === 'string') respObj = resp ? JSON.parse(resp) : resp;
   } catch (e) {
-    try { console.log('[performPatientCasesToCode] failed to parse casesToCode response, passing raw value to charge entry'); } catch (ee) {}
+    // suppressed console output
   }
 
   const doChargeEntry = options && Object.prototype.hasOwnProperty.call(options, 'chargeEntry') ? !!options.chargeEntry : true;
   if (doChargeEntry) {
     try {
-      try { console.log('[performPatientCasesToCode] calling performPatientChargeEntry'); } catch (ee) {}
+      // suppressed console output
       // augment response object with UI-provided amounts for charge wiring
       try {
         if (options && options.cptAmounts) {
@@ -114,12 +114,11 @@ export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryI
       } catch (e) {}
       const chargeResult = await performPatientChargeEntry(apiBaseUrl, respObj, 'A_2018', 'bone', '200', token, logFn);
       try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'ok', timestamp: new Date().toISOString(), durationMs: 0 } as any); } catch (e) {}
-      try { console.log('[performPatientChargeEntry] result:', JSON.stringify(chargeResult)); } catch (e) {}
     } catch (e) {
       try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'error', error: String(e), timestamp: new Date().toISOString() } as any); } catch (ee) {}
     }
   } else {
-    try { console.log('[performPatientCasesToCode] charge entry skipped (options.chargeEntry=false)'); } catch (e) {}
+    // suppressed console output for skipped charge entry
   }
 }
 
@@ -189,8 +188,7 @@ export async function performChargeEntry(apiBaseUrl: string, chargeEntryRequestB
   const rel = `/CaseToCharge/SavePerformedProcedure/`;
   const url = base + rel;
   try {
-    try { console.log('[performChargeEntry] POST', url, 'payloadItems=', Array.isArray(chargeEntryRequestBody) ? chargeEntryRequestBody.length : 1); } catch (e) {}
-    try { if (Array.isArray(chargeEntryRequestBody) && chargeEntryRequestBody.length) console.log('[performChargeEntry] first payload item:', JSON.stringify(chargeEntryRequestBody[0])); } catch (e) {}
+    // suppressed verbose debug logs
     // Use the shared postJson wrapper which returns response data or throws on error
     const res = await postJson(url, chargeEntryRequestBody, 20000, { 'Content-Type': 'application/json', token }, logFn);
     // postJson returns the response body. To mirror the Java behavior, only return when successful (we are here because no error thrown)
@@ -199,12 +197,11 @@ export async function performChargeEntry(apiBaseUrl: string, chargeEntryRequestB
     try { return typeof res === 'string' ? res : JSON.stringify(res); } catch (e) { return res; }
   } catch (err: any) {
     // Enhanced error logging
-    try { console.error('[performChargeEntry] error', err && err.message ? err.message : err); } catch (e) {}
+    // suppressed error log
     try {
       const resp = err && err.response ? err.response : null;
       if (resp) {
-        try { console.error('[performChargeEntry] response status:', resp.status); } catch (e) {}
-        try { console.error('[performChargeEntry] response data:', JSON.stringify(resp.data)); } catch (e) {}
+        // suppressed response diagnostics
       }
     } catch (ee) {}
     try { if (logFn) logFn({ url, method: 'POST', status: 'error', error: err && err.message ? err.message : String(err), timestamp: new Date().toISOString() } as any); } catch (e) {}

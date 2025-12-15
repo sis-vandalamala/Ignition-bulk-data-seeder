@@ -170,7 +170,7 @@ export async function createPatient(apiBaseUrl: string, token: string, patientPa
 
 	// Use axios directly for detailed debugging (status, headers, raw body)
 	try {
-		console.log('[createPatient] payload:', JSON.stringify(payload));
+		// suppressed debug payload log
 		const res = await axios.post(url, payload, {
 			headers,
 			timeout: 30000,
@@ -183,7 +183,7 @@ export async function createPatient(apiBaseUrl: string, token: string, patientPa
 		} catch (parseErr) {
 			
 		}
-		console.log('[createPatient] response:', parsedResponse ?? res.data);
+		// suppressed response log
 		return { request: payload, response: parsedResponse ?? res.data };
 		} catch (err: any) {
 			// rethrow
@@ -246,7 +246,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 								let lockRes: any = null;
 								try {
 									lockRes = await requestRecordLock(thisPid, token, apiBaseUrl);
-									try { console.log('[requestRecordLock] response:', JSON.stringify(lockRes)); } catch (e) {}
+									// suppressed requestRecordLock log
 								} catch (e) {
 									outcomes[index - 1] = { index, request, response, fullPatient: full, error: `recordLock failed: ${String(e)}` } as any;
 									return;
@@ -291,9 +291,9 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 									// release record lock for this patient
 									try {
 										const rel = await releaseRecordLock((patientSource && patientSource.patientId) ? (patientSource.patientId as number) : thisPid, token, apiBaseUrl);
-										try { console.log('[releaseRecordLock] response:', JSON.stringify(rel)); } catch (e) {}
+										// suppressed releaseRecordLock response log
 									} catch (e) {
-										try { console.log('[releaseRecordLock] error:', String(e)); } catch (e) {}
+										// suppressed releaseRecordLock error log
 									}
 									// after releasing the record lock, trigger discharge flow (best-effort)
 									try {
@@ -302,16 +302,16 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 										const depth = (typeof opts.flowDepth === 'number' ? opts.flowDepth : 3);
 										// depth >=1 => discharge
 										if (depth >= 1) {
-											try { console.log('[createBasicPatients] depth>=1 runDischargeFlow', { depth, userName: opts.username, passPatientId, passCaseSummaryId, facilityId: opts.facilityId }); } catch (e) {}
+											// suppressed discharge flow debug log
 											await runDischargeFlow(opts.username, apiBaseUrl, token, logFn, passPatientId, passCaseSummaryId as any, opts.facilityId);
 										}
 										// depth >=2 => cases-to-code; depth >=3 => include charge entry
 										if (passCaseSummaryId && depth >= 2) {
-											try { console.log('[createBasicPatients] depth>=2 performPatientCasesToCode', { depth, caseSummaryId: passCaseSummaryId }); } catch (e) {}
+											// suppressed cases-to-code debug log
 											await codingChargeEntry.performPatientCasesToCode(apiBaseUrl, String(passCaseSummaryId), token, logFn, { chargeEntry: depth >= 3, cptAmounts: (opts as any).cptAmounts, feeScheduleOverride: (opts as any).feeScheduleOverride });
 										}
 									} catch (dfErr) {
-										try { console.log('[runDischargeFlow] error:', String(dfErr)); } catch (e) {}
+										// suppressed discharge flow error log
 									}
 						} catch (csErr) {
 							// attach case summary error but keep previous data

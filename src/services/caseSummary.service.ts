@@ -406,10 +406,8 @@ export async function createCaseSummary({
 		});
 	}
 	const url = `${base}${CASE_SUMMARY_ENDPOINT}`;
-	// Post the case summary and log the UpsertCaseSummary response concisely
-	console.log('[createCaseSummary] payload:', JSON.stringify(payload));
+	// Post the case summary (debug logs suppressed)
 	const res = await postJson(url, payload, timeoutMs, buildHeaders(token), logFn);
-	console.log('[createCaseSummary] response:', JSON.stringify(res));
 	return res;
 }
 

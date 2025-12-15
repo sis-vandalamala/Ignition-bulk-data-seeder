@@ -18,7 +18,7 @@ export function setGlobalApiLogger(fn?: (entry: ApiLogEntry) => void) {
 }
 
 export async function postJson(url: string, payload: any, timeout = 5000, headers?: Record<string, any>, logFn?: (entry: ApiLogEntry) => void) {
-	try { console.debug('[postJson] url=', url, 'headers=', headers ? Object.keys(headers) : 'none'); } catch (e) {}
+	// debug logging suppressed
 	const start = Date.now();
 	const startIso = new Date(start).toISOString();
 	const opts: any = { timeout };
@@ -46,7 +46,7 @@ export async function postJson(url: string, payload: any, timeout = 5000, header
 }
 
 export async function getJson(url: string, timeout = 5000, headers?: Record<string, any>, logFn?: (entry: ApiLogEntry) => void) {
-	try { console.debug('[getJson] url=', url, 'headers=', headers ? Object.keys(headers) : 'none'); } catch (e) {}
+	// debug logging suppressed
 	const start = Date.now();
 	const startIso = new Date(start).toISOString();
 	const opts: any = { timeout };

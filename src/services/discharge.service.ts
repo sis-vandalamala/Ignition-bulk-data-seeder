@@ -90,18 +90,18 @@ export async function getFormByName(apiBaseUrl: string, token: string, logFn?: (
 
 export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, token?: string, logFn?: (entry: ApiLogEntry) => void, patientId?: number, caseSummaryId?: number, orgId?: number): Promise<void> {
 	userName = "sisadmin";
-    if (!userName || !apiBaseUrl || !token) {
-		try { console.log('[runDischargeFlow] skipped: missing required params', { userName: !!userName, apiBaseUrl: !!apiBaseUrl, token: !!token }); } catch (e) {}
+	if (!userName || !apiBaseUrl || !token) {
+		// suppressed missing params log
 		return;
 	}
 	try {
 		const staff = await getStaffDetails(userName, apiBaseUrl, token, logFn);
-		try { console.log('[getStaffDetails] result:', JSON.stringify(staff)); } catch (e) {}
+		// suppressed getStaffDetails result log
 		// Now fetch case detail information for the Recovery department if IDs provided
 		let extractedModuleId: number | undefined = undefined;
 		if (patientId && caseSummaryId) {
 			const cd = await getCaseDetailInformation('Recovery', patientId, caseSummaryId, apiBaseUrl, token, logFn);
-			try { console.log('[getCaseDetailInformation] result:', JSON.stringify(cd)); } catch (e) {}
+			// suppressed getCaseDetailInformation result log
 			if (cd && cd.module) {
 				extractedModuleId = Number(cd.module.moduleId ?? cd.module.moduleID ?? cd.module.moduleId);
 			}
@@ -110,27 +110,27 @@ export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, t
 		if (!extractedModuleId && caseSummaryId) {
 			try {
 				const mod = await getModulesBycaseId(caseSummaryId, orgId, 'Recovery', apiBaseUrl, token, logFn);
-				try { console.log('[getModulesBycaseId] result:', JSON.stringify(mod)); } catch (e) {}
+				// suppressed getModulesBycaseId result log
 				if (mod && mod.moduleId) extractedModuleId = Number(mod.moduleId);
 			} catch (e) {
-				try { console.log('[getModulesBycaseId] error:', String(e)); } catch (ee) {}
+				// suppressed getModulesBycaseId error log
 			}
 		}
 		// Fetch form by name (RecordHeader/Patient Panel/GetFormbyName)
 		let extractedFormId: number | undefined = undefined;
 		try {
 			const form = await getFormByName(apiBaseUrl, token, logFn);
-			try { console.log('[getFormByName] result:', JSON.stringify(form)); } catch (e) {}
+			// suppressed getFormByName result log
 			if (form && (form.formId || form.FormId)) extractedFormId = Number(form.formId ?? form.FormId);
 		} catch (e) {
-			try { console.log('[getFormByName] error:', String(e)); } catch (ee) {}
+			// suppressed getFormByName error log
 		}
 
 		// Fetch form usage by form owner (requires moduleId, caseSummaryId, formId if available)
 		try {
 			if (extractedModuleId && caseSummaryId && extractedFormId) {
 				const fu = await getFormUsageByFormOwner(extractedModuleId, caseSummaryId, extractedFormId, apiBaseUrl, token, logFn);
-				try { console.log('[getFormUsageByFormOwner] result:', JSON.stringify(fu)); } catch (e) {}
+				// suppressed getFormUsageByFormOwner result log
 				// If we got a formUsageId, attempt to update it with staff and timestamps
 				try {
 					const formUsageId = fu && (fu.formUsageId || fu.formUsageId === 0) ? fu.formUsageId : null;
@@ -139,170 +139,170 @@ export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, t
 					if (formUsageId && staffIdVal) {
 						const lastUpdated = (new Date()).toISOString().slice(0,10) + 'T01:00:00.000';
 						const upd = await updateFormUsageByFormOwner(formUsageId, caseSummaryId, extractedModuleId, extractedFormId, staffIdVal, staffNameVal, lastUpdated, apiBaseUrl, token, logFn);
-						try { console.log('[updateFormUsageByFormOwner] result:', JSON.stringify(upd)); } catch (e) {}
+						// suppressed updateFormUsageByFormOwner result log
 					}
 				} catch (e) {
-					try { console.log('[updateFormUsageByFormOwner] error:', String(e)); } catch (ee) {}
+					// suppressed updateFormUsageByFormOwner error log
 				}
 			}
 		} catch (e) {
-			try { console.log('[getFormUsageByFormOwner] error:', String(e)); } catch (ee) {}
+			// suppressed getFormUsageByFormOwner error log
 		}
 
 			// Fetch area care informations by case
 			try {
 				if (patientId && caseSummaryId) {
 					const ac = await getAreaCareInformationsByCase(patientId, caseSummaryId, apiBaseUrl, token, logFn);
-					try { console.log('[getAreaCareInformationsByCase] result:', JSON.stringify(ac)); } catch (e) {}
+					// suppressed getAreaCareInformationsByCase result log
 				}
 			} catch (e) {
-				try { console.log('[getAreaCareInformationsByCase] error:', String(e)); } catch (ee) {}
+				// suppressed getAreaCareInformationsByCase error log
 			}
 			// Update CaseSummary status to 0 (discharged) if we have a caseSummaryId
 			try {
 				if (caseSummaryId) {
 					const csu = await caseSummaryUpdateCaseStatus(caseSummaryId, 0, apiBaseUrl, token, logFn);
-					try { console.log('[caseSummaryUpdateCaseStatus] result:', JSON.stringify(csu)); } catch (e) {}
+					// suppressed caseSummaryUpdateCaseStatus result log
 				}
 			} catch (e) {
-				try { console.log('[caseSummaryUpdateCaseStatus] error:', String(e)); } catch (ee) {}
+				// suppressed caseSummaryUpdateCaseStatus error log
 			}
 			// After updating case status, request a record lock for the module (if available)
 			try {
 				if (caseSummaryId && extractedModuleId) {
 					const lockRes = await requestLock(caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					try { console.log('[requestLock] result:', JSON.stringify(lockRes)); } catch (e) {}
+						// suppressed requestLock result log
 				}
 			} catch (e) {
-				try { console.log('[requestLock] error:', String(e)); } catch (ee) {}
+				// suppressed requestLock error log
 			}
 			// Also call the Java-style area-care-by-case function for department 'Recovery'
 			try {
 				if (patientId && caseSummaryId && extractedModuleId) {
 					const acDept = await getAreaCareInformationsByCaseForDepartment('Recovery', patientId, caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					try { console.log('[getAreaCareInformationsByCaseForDepartment] result:', JSON.stringify(acDept)); } catch (e) {}
+					// suppressed getAreaCareInformationsByCaseForDepartment result log
 				}
 			} catch (e) {
-				try { console.log('[getAreaCareInformationsByCaseForDepartment] error:', String(e)); } catch (ee) {}
+				// suppressed getAreaCareInformationsByCaseForDepartment error log
 			}
 			// Insert a new AreaOfCareInformation record (use today's date/time if not provided)
 			try {
 				if (patientId && caseSummaryId && extractedModuleId) {
 					const insertRes = await insertAreaOfCareInformation(undefined, caseSummaryId, extractedModuleId as number, patientId, apiBaseUrl, token, logFn);
-					try { console.log('[insertAreaOfCareInformation] result:', JSON.stringify(insertRes)); } catch (e) {}
+					// suppressed insertAreaOfCareInformation result log
 				}
-			} catch (e) {
-				try { console.log('[insertAreaOfCareInformation] error:', String(e)); } catch (ee) {}
-			}
+				} catch (e) {
+					// suppressed insertAreaOfCareInformation error log
+				}
 			// Save area of care staff details
 			try {
 				if (patientId && caseSummaryId && extractedModuleId && staff && staff.staffDetails) {
 					const staffIdVal = staff.staffDetails.staffId ?? staff.staffDetails.staffId;
 					const staffRoleId = (staff.staffDetails.roleId ?? 0) as number;
 					const saveRes = await saveAreaOfCareStaffDetails(staffIdVal, staffRoleId, caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					try { console.log('[saveAreaOfCareStaffDetails] result:', JSON.stringify(saveRes)); } catch (e) {}
+					// suppressed saveAreaOfCareStaffDetails result log
 				}
-			} catch (e) {
-				try { console.log('[saveAreaOfCareStaffDetails] error:', String(e)); } catch (ee) {}
-			}
+				} catch (e) {
+					// suppressed saveAreaOfCareStaffDetails error log
+				}
 			// Re-run Java-style GetAreaCareInformationsbyCaseForDepartment (department 'Recovery') after saving staff
 			try {
 				if (patientId && caseSummaryId && extractedModuleId) {
 					const acAfter = await getAreaCareInformationsByCaseForDepartment('Recovery', patientId, caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					try { console.log('[getAreaCareInformationsByCaseForDepartment after save] result:', JSON.stringify(acAfter)); } catch (e) {}
+						// suppressed getAreaCareInformationsByCaseForDepartment after save result log
 				}
-			} catch (e) {
-				try { console.log('[getAreaCareInformationsByCaseForDepartment after save] error:', String(e)); } catch (ee) {}
-			}
+				} catch (e) {
+					// suppressed getAreaCareInformationsByCaseForDepartment after save error log
+				}
             // Get Patient HandsOff Data (first call)
 			try {
 				if (caseSummaryId && extractedModuleId) {
 					const ph = await getPatientHandsOffData(caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					try { console.log('[getPatientHandsOffData] result:', JSON.stringify(ph)); } catch (e) {}
+					// suppressed getPatientHandsOffData result log
 				}
-			} catch (e) {
-				try { console.log('[getPatientHandsOffData] error:', String(e)); } catch (ee) {}
-			}
+				} catch (e) {
+					// suppressed getPatientHandsOffData error log
+				}
             // Get Patient HandsOff Data (second call, after area-of-care save)
 			try {
 				if (caseSummaryId && extractedModuleId) {
 					const ph2 = await getPatientHandsOffData(caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					try { console.log('[getPatientHandsOffData after save] result:', JSON.stringify(ph2)); } catch (e) {}
+					// suppressed getPatientHandsOffData after save result log
 				}
-			} catch (e) {
-				try { console.log('[getPatientHandsOffData after save] error:', String(e)); } catch (ee) {}
-			}
+				} catch (e) {
+					// suppressed getPatientHandsOffData after save error log
+				}
 			// Insert Patient HandOff Data (call once after getPatientHandsOffData)
 			try {
 				if (caseSummaryId && extractedModuleId) {
 					const phIns = await insertPatientHandOffData(4, 0, null, caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					try { console.log('[insertPatientHandOffData] result:', JSON.stringify(phIns)); } catch (e) {}
+					// suppressed insertPatientHandOffData result log
 				}
-			} catch (e) {
-				try { console.log('[insertPatientHandOffData] error:', String(e)); } catch (ee) {}
-			}
+				} catch (e) {
+					// suppressed insertPatientHandOffData error log
+				}
 			// Save area of care staff details again immediately after patient handoff
 			try {
 				if (patientId && caseSummaryId && extractedModuleId && staff && staff.staffDetails) {
 					const staffIdVal = staff.staffDetails.staffId ?? staff.staffDetails.staffId;
 					const staffRoleId = (staff.staffDetails.roleId ?? 0) as number;
 					const saveRes2 = await saveAreaOfCareStaffDetails(staffIdVal, staffRoleId, caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					try { console.log('[saveAreaOfCareStaffDetails after handoff] result:', JSON.stringify(saveRes2)); } catch (e) {}
+					// suppressed saveAreaOfCareStaffDetails after handoff result log
 				}
-			} catch (e) {
-				try { console.log('[saveAreaOfCareStaffDetails after handoff] error:', String(e)); } catch (ee) {}
-			}
+				} catch (e) {
+					// suppressed saveAreaOfCareStaffDetails after handoff error log
+				}
 			// Insert Patient HandOff Data with caseStatus 10 (call next)
 			try {
 				if (caseSummaryId && extractedModuleId) {
 					const phIns10 = await insertPatientHandOffData(10, 10, null, caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					try { console.log('[insertPatientHandOffData(10,10,null)] result:', JSON.stringify(phIns10)); } catch (e) {}
+					// suppressed insertPatientHandOffData(10,10,null) result log
 				}
-			} catch (e) {
-				try { console.log('[insertPatientHandOffData(10,10,null)] error:', String(e)); } catch (ee) {}
-			}
+				} catch (e) {
+					// suppressed insertPatientHandOffData(10,10,null) error log
+				}
 			// Save area of care staff details again after the second patient handoff
 			try {
 				if (patientId && caseSummaryId && extractedModuleId && staff && staff.staffDetails) {
 					const staffIdVal = staff.staffDetails.staffId ?? staff.staffDetails.staffId;
 					const staffRoleId = (staff.staffDetails.roleId ?? 0) as number;
 					const saveRes3 = await saveAreaOfCareStaffDetails(staffIdVal, staffRoleId, caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					try { console.log('[saveAreaOfCareStaffDetails after second handoff] result:', JSON.stringify(saveRes3)); } catch (e) {}
+					// suppressed saveAreaOfCareStaffDetails after second handoff result log
 				}
-			} catch (e) {
-				try { console.log('[saveAreaOfCareStaffDetails after second handoff] error:', String(e)); } catch (ee) {}
-			}
+				} catch (e) {
+					// suppressed saveAreaOfCareStaffDetails after second handoff error log
+				}
 			// Request record lock again after the second handoff and save
 			try {
 				if (caseSummaryId && extractedModuleId) {
 					const lockRes2 = await requestLock(caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					try { console.log('[requestLock after second handoff] result:', JSON.stringify(lockRes2)); } catch (e) {}
+					// suppressed requestLock after second handoff result log
 				}
 			} catch (e) {
-				try { console.log('[requestLock after second handoff] error:', String(e)); } catch (ee) {}
+				// suppressed requestLock after second handoff error log
 			}
 			// Upsert CaseSummary information (status updates etc.)
 			try {
 				if (caseSummaryId) {
 					const upsertRes = await upsertCaseSummaryInfo(caseSummaryId, undefined, apiBaseUrl, token, logFn);
-					try { console.log('[upsertCaseSummaryInfo] result:', JSON.stringify(upsertRes)); } catch (e) {}
+					// suppressed upsertCaseSummaryInfo result log
 				}
 			} catch (e) {
-				try { console.log('[upsertCaseSummaryInfo] error:', String(e)); } catch (ee) {}
+				// suppressed upsertCaseSummaryInfo error log
 			}
 			// Release record lock for department 'Recovery'
 			try {
 				if (caseSummaryId) {
 					const relRes = await releaseLockPatient('Recovery', caseSummaryId, apiBaseUrl, token, orgId, logFn);
-					try { console.log('[releaseLockPatient] result:', JSON.stringify(relRes)); } catch (e) {}
+					// suppressed releaseLockPatient result log
 				}
 			} catch (e) {
-				try { console.log('[releaseLockPatient] error:', String(e)); } catch (ee) {}
+				// suppressed releaseLockPatient error log
 			}
 
 		// Additional ordered APIs can be placed here
 	} catch (e) {
-		try { console.log('[runDischargeFlow] error:', String(e)); } catch (ee) {}
+		// suppressed runDischargeFlow error log
 	}
 }
 
@@ -607,7 +607,7 @@ export async function upsertCaseSummaryInfo(caseSummaryId: number, appointmentId
 	} catch (err: any) {
 		let detail: any = null;
 		try { detail = err.response ? err.response.data : null; } catch (_) {}
-		try { console.log('[upsertCaseSummaryInfo] error detail:', JSON.stringify({ message: err.message, response: detail, payload })); } catch (_) {}
+		// suppressed upsertCaseSummaryInfo error detail log
 		return { status: 500, error: err.message, response: detail, sentPayload: payload } as any;
 	}
 }

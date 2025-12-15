@@ -55,7 +55,7 @@ export async function getRoomsForOrganization(token: string, apiBaseUrl?: string
     };
     // Use shared getJson so the global API logger captures this call
     const res = await getJson(url, 10000, headers);
-    try { const first = Array.isArray(res) ? res[0] : res; console.log('[getRoomsForOrganization] response:', first); } catch (e) {}
+    // suppressed debug log for getRoomsForOrganization
     return res;
 }
 
@@ -70,7 +70,7 @@ export async function getAppointmentTypeNameAndID(token: string, apiBaseUrl?: st
         Referer: base + '/',
     };
     const res = await getJson(url, 10000, headers);
-    try { const first = Array.isArray(res) ? res[0] : res; console.log('[getAppointmentTypeNameAndID] response:', first); } catch (e) {}
+    // suppressed debug log for getAppointmentTypeNameAndID
     return res;
 }
 
@@ -85,7 +85,7 @@ export async function getPhysicianNameAndID(token: string, apiBaseUrl?: string, 
         Referer: base + '/',
     };
     const res = await getJson(url, 10000, headers);
-    try { const first = Array.isArray(res) ? res[0] : res; console.log('[getPhysicianNameAndID] response:', first); } catch (e) {}
+    // suppressed debug log for getPhysicianNameAndID
     return res;
 }
 
@@ -103,7 +103,7 @@ export async function getFeeSchedules(token: string, apiBaseUrl?: string, extraH
     // Try shared getJson first for logging
     try {
         const res = await getJson(url, 15000, defaultHeaders as any);
-        try { const first = Array.isArray(res) ? res[0] : res; console.log('[getFeeSchedules] response:', first); } catch (e) {}
+        // suppressed debug log for getFeeSchedules
         return res;
     } catch (err) {
         // fallback to axios for more control
