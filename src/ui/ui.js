@@ -83,7 +83,16 @@
     if (autoPanel) autoPanel.style.display = current === 'auto' ? '' : 'none';
   }
   syncModePanels();
-  if (mode) mode.addEventListener('change', syncModePanels);
+  if (mode) mode.addEventListener('change', () => {
+    syncModePanels();
+    try {
+      // when in manual mode, make the count field read-only; when auto, allow editing
+      if (count) count.readOnly = (mode.value === 'manual');
+      // reflect the same for autoCount visibility (existing UI handles panel switching)
+    } catch (e) {}
+  });
+  // initialize count readonly based on current mode
+  try { if (count) count.readOnly = (mode && mode.value ? mode.value === 'manual' : true); } catch (e) {}
 
   function initFlowDepthControls(inputEl, labelEl, stepsEl){
     if (!inputEl || !labelEl) return;
