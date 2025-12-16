@@ -198,6 +198,25 @@
               </select>
             </div>
           </div>
+          <div class="support-field-wrap">
+            <div class="field">
+              <label>Insurance Type</label>
+              <div style="display:flex;gap:12px;align-items:center;margin-top:6px">
+                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="insuranceType" id="insuranceTypeSelect" value="select" checked /> Select</label>
+                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="insuranceType" id="insuranceTypeCreate" value="create" /> Create New</label>
+              </div>
+                 <div id="insuranceTypeHint" class="muted" style="margin-top:8px">'Create New' uses entered suffix and creates new Insurance.</div>
+            </div>
+          </div>
+          <div class="support-field-wrap" id="insuranceSelectWrap" style="display:none">
+            <div class="field">
+              <label>Insurance</label>
+              <select id="insuranceSelect">
+                <option value="" disabled selected>Loading...</option>
+              </select>
+              <div class="muted" style="margin-top:6px;font-size:12px">Select an existing insurance to map to the patient.</div>
+            </div>
+          </div>
         </div>
       </div>
       

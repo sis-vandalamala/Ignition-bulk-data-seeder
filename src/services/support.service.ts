@@ -133,6 +133,26 @@ export async function getPeriodBatches(token: string, apiBaseUrl?: string, extra
     }
 }
 
+export async function getInsuranceCarriers(token: string, apiBaseUrl?: string, extraHeaders?: Record<string,string>) {
+    if (!apiBaseUrl) throw new Error('apiBaseUrl is required for getInsuranceCarriers');
+    const base = String(apiBaseUrl).replace(/\/+$|\/$/g, '').replace(/\/$/, '');
+    const url = `${base}/api/InsuranceCarrierObject/GetInsuranceCarriers`;
+    const defaultHeaders: Record<string,string> = Object.assign({
+        Accept: 'application/json',
+        priority: 'u=1, i',
+        token,
+        Referer: base + '/',
+    }, extraHeaders || {});
+
+    try {
+        const res = await getJson(url, 15000, defaultHeaders as any);
+        return res;
+    } catch (err) {
+        const axiosRes = await axios.get(url, { headers: defaultHeaders, timeout: 15000, responseType: 'json' });
+        return axiosRes.data;
+    }
+}
+
 export async function createPeriod(token: string, apiBaseUrl?: string, periodPayload?: any, extraHeaders?: Record<string,string>) {
     if (!apiBaseUrl) throw new Error('apiBaseUrl is required for createPeriod');
     const base = String(apiBaseUrl).replace(/\/+$/, '');
@@ -175,4 +195,5 @@ export default {
     requestRecordLock,
     releaseRecordLock,
     getFeeSchedules,
+    getInsuranceCarriers,
 };

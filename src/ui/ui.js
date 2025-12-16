@@ -34,6 +34,11 @@
   const periodSelect = document.getElementById('periodSelect');
   const batchSelect = document.getElementById('batchSelect');
   const periodBatchHint = document.getElementById('periodBatchHint');
+  const insuranceTypeSelect = document.getElementById('insuranceTypeSelect');
+  const insuranceTypeCreate = document.getElementById('insuranceTypeCreate');
+  const insuranceSelectWrap = document.getElementById('insuranceSelectWrap');
+  const insuranceSelect = document.getElementById('insuranceSelect');
+  const insuranceTypeHint = document.getElementById('insuranceTypeHint');
   const dosInput = $('dos');
   const runBtn = $('runBtn');
   const autoRunBtn = $('autoRunBtn');
@@ -183,6 +188,7 @@
   let _cachedCPTs = null;
   let _cachedPeriods = null;
   let _cachedBatches = null;
+  let _cachedInsurances = null;
   function renderTable(){
     if (!logTableBody) return;
     const q = (logFilter && logFilter.value ? logFilter.value.toLowerCase() : '').trim();
@@ -573,6 +579,10 @@
   createCustomDropdown(roomSelect, () => _cachedRooms, r => (r.name ?? r.roomName ?? r.RoomName ?? r.displayName ?? JSON.stringify(r)), r => (r.roomId ?? r.RoomId ?? r.roomID ?? r.id ?? ''));
   createCustomDropdown(apptTypeSelect, () => _cachedAppts, a => (a.appointment_Type_Desc ?? a.appTypeDesc ?? a.description ?? a.name ?? JSON.stringify(a)), a => (a.appointmentTypeId ?? a.AppointmentTypeId ?? a.appointmentTypeID ?? a.id ?? ''));
   createCustomDropdown(physicianSelect, () => _cachedPhysicians, p => ((p.fullName ?? p.FullName ?? p.name) || `${p.firstName || ''} ${p.lastName || ''}`.trim() || JSON.stringify(p)), p => (p.personId ?? p.PersonId ?? p.id ?? ''));
+  // add searchable dropdowns for period, batch and insurance selects
+  createCustomDropdown(periodSelect, () => _cachedPeriods, p => ((p.label ?? p.periodName ?? String(p.periodId)) || JSON.stringify(p)), p => (p.periodId ?? p.value ?? ''));
+  createCustomDropdown(batchSelect, () => _cachedBatches, b => ((b.batchDescription ?? b.label ?? String(b.batchId)) || JSON.stringify(b)), b => (b.batchId ?? b.id ?? ''));
+  createCustomDropdown(insuranceSelect, () => _cachedInsurances, i => (i.insuranceCarrierName ?? i.insuranceName ?? i.name ?? JSON.stringify(i)), i => (i.insuranceCarrierId ?? i.insuranceId ?? i.id ?? ''));
   // cptSelect is a native multi-select; do not create custom single-select dropdown for it
   function createCustomMultiDropdown(selectEl, cachedRowsGetter, makeLabel, makeValue) {
     if (!selectEl) return;
@@ -766,6 +776,19 @@
   // initial visibility
   updatePeriodBatchVisibility();
 
+  // helper to toggle visibility of Insurance select
+  function updateInsuranceVisibility() {
+    try {
+      const sel = document.querySelector('input[name="insuranceType"]:checked');
+      const showSelect = sel && sel.value === 'select';
+      if (insuranceSelectWrap) insuranceSelectWrap.style.display = showSelect ? '' : 'none';
+    } catch (e) { /* ignore */ }
+  }
+  try { if (insuranceTypeSelect) insuranceTypeSelect.addEventListener('change', updateInsuranceVisibility); } catch (e) {}
+  try { if (insuranceTypeCreate) insuranceTypeCreate.addEventListener('change', updateInsuranceVisibility); } catch (e) {}
+  // initial visibility
+  updateInsuranceVisibility();
+
   // when period changes, update batch select
   try {
     if (periodSelect) {
@@ -776,6 +799,7 @@
           if (batchSelect) {
             batchSelect.innerHTML = items.map(b => `<option value="${b.batchId}">${b.batchDescription ?? b.label ?? String(b.batchId)}</option>`).join('');
             if (batchSelect.options && batchSelect.options.length) batchSelect.selectedIndex = 0;
+            try { if (batchSelect && batchSelect._custom && typeof batchSelect._custom.refresh === 'function') batchSelect._custom.refresh(); } catch (e) {}
           }
         } catch (e) {}
       });
@@ -900,6 +924,7 @@
                 periodSelect._originalOptions = filtered.slice();
                 periodSelect.innerHTML = filtered.map(p => `<option value="${p.periodId}">${p.label ?? p.periodName ?? String(p.periodId)}</option>`).join('');
                 if (periodSelect.options && periodSelect.options.length) periodSelect.selectedIndex = 0;
+                try { if (periodSelect && periodSelect._custom && typeof periodSelect._custom.refresh === 'function') periodSelect._custom.refresh(); } catch (e) {}
               }
               if (Array.isArray(sup.batches) && batchSelect) {
                 _cachedBatches = sup.batches.slice();
@@ -909,6 +934,7 @@
                 const initialBatches = (firstPeriodId && Array.isArray(_cachedBatches)) ? _cachedBatches.filter(b => String(b.periodId) === String(firstPeriodId)) : _cachedBatches.slice();
                 batchSelect.innerHTML = initialBatches.map(b => `<option value="${b.batchId}">${b.batchDescription ?? b.label ?? String(b.batchId)}</option>`).join('');
                 if (batchSelect.options && batchSelect.options.length) batchSelect.selectedIndex = 0;
+                try { if (batchSelect && batchSelect._custom && typeof batchSelect._custom.refresh === 'function') batchSelect._custom.refresh(); } catch (e) {}
               }
             } catch (e) { /* ignore period/batch populate errors */ }
             if (sup.feeSchedule && Array.isArray(sup.feeSchedule) && cptSelect) {
@@ -923,6 +949,20 @@
               if (cptSelect.options && cptSelect.options.length) cptSelect.selectedIndex = 0;
                 try { if (cptSelect && cptSelect._custom && typeof cptSelect._custom.refresh === 'function') cptSelect._custom.refresh(); } catch (e) {}
             }
+            // populate insurances if provided by support data
+            try {
+              if (Array.isArray(sup.insurances) && insuranceSelect) {
+                _cachedInsurances = sup.insurances.slice();
+                insuranceSelect._originalOptions = sup.insurances.slice();
+                insuranceSelect.innerHTML = sup.insurances.map(ins => {
+                  const val = ins.insuranceCarrierId ?? ins.insuranceId ?? ins.id ?? ins.value ?? '';
+                  const label = ins.insuranceCarrierName ?? ins.insuranceName ?? ins.name ?? ins.displayName ?? JSON.stringify(ins);
+                  return `<option value="${val}">${label}</option>`;
+                }).join('');
+                if (insuranceSelect.options && insuranceSelect.options.length) insuranceSelect.selectedIndex = 0;
+                try { if (insuranceSelect && insuranceSelect._custom && typeof insuranceSelect._custom.refresh === 'function') insuranceSelect._custom.refresh(); } catch (e) {}
+              }
+            } catch (e) { /* ignore insurance populate errors */ }
           } catch (e) { /* ignore populate support selects error */ }
           try {
             if (sup && Array.isArray(sup.logs)) {
@@ -1134,6 +1174,9 @@
         , periodBatch: (() => { try { const sel = document.querySelector('input[name="periodBatch"]:checked'); return sel ? sel.value : 'select'; } catch (e) { return 'select' } })()
         , periodId: (() => { try { return periodSelect && periodSelect.value ? periodSelect.value : undefined; } catch (e) { return undefined } })()
         , batchId: (() => { try { return batchSelect && batchSelect.value ? batchSelect.value : undefined; } catch (e) { return undefined } })()
+        , insuranceType: (() => { try { const sel = document.querySelector('input[name="insuranceType"]:checked'); return sel ? sel.value : 'select'; } catch (e) { return 'select' } })()
+        , insuranceId: (() => { try { return (insuranceSelect && insuranceSelect.value && document.querySelector('input[name="insuranceType"]:checked')?.value === 'select') ? insuranceSelect.value : undefined; } catch (e) { return undefined } })()
+        , insuranceName: (() => { try { return (insuranceSelect && insuranceSelect.selectedOptions && document.querySelector('input[name="insuranceType"]:checked')?.value === 'select') ? insuranceSelect.selectedOptions[0].textContent : undefined; } catch (e) { return undefined } })()
         , flowDepth: flowDepth ? Number(flowDepth.value) : 3
       }
     };

@@ -4,7 +4,7 @@ import { loginUser, logoutUser } from './auth';
 import { setGlobalApiLogger } from '../src/utils/api';
 import { postJson } from '../src/utils/api';
 import { createBasicPatients } from '../src/services/patient.service';
-import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID, getFeeSchedules, getPeriodBatches } from '../src/services/support.service';
+import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID, getFeeSchedules, getPeriodBatches, getInsuranceCarriers } from '../src/services/support.service';
 
 const app = express();
 app.use(express.json());
@@ -182,12 +182,19 @@ app.post('/support-data', async (req, res) => {
 						(physicians as any).__batches = batches;
 					} catch (e: any) { /* suppressed getPeriodBatches error */ }
 
+					try {
+						// Fetch insurance carriers
+						const ins = await getInsuranceCarriers(token as any, apiUrl);
+						(physicians as any).__insurances = ins;
+					} catch (e: any) { /* suppressed getInsuranceCarriers error */ }
+
 					// suppressed support-data captured logs output
 					// include feeSchedule, periods and batches if available (stored on physicians.__* above)
 					const feeSchedule = (physicians as any && (physicians as any).__feeSchedule) ? (physicians as any).__feeSchedule : undefined;
 					const periods = (physicians as any && (physicians as any).__periods) ? (physicians as any).__periods : undefined;
 					const batches = (physicians as any && (physicians as any).__batches) ? (physicians as any).__batches : undefined;
-					return res.json({ ok: true, rooms, appointmentTypes, physicians, feeSchedule, periods, batches, logs });
+					const insurances = (physicians as any && (physicians as any).__insurances) ? (physicians as any).__insurances : undefined;
+					return res.json({ ok: true, rooms, appointmentTypes, physicians, feeSchedule, periods, batches, insurances, logs });
 			} finally {
 				try { setGlobalApiLogger(undefined); } catch (e) {}
 			}
