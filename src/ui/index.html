@@ -176,9 +176,9 @@
               <label>Period/Batch</label>
               <div style="display:flex;gap:12px;align-items:center;margin-top:6px">
                 <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="periodBatch" id="periodBatchSelect" value="select" checked /> Select</label>
-                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="periodBatch" id="periodBatchCreate" value="create" /> Create New</label>
+                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="periodBatch" id="periodBatchCreate" value="create" /> Create</label>
               </div>
-                 <div id="periodBatchHint" class="muted" style="margin-top:8px">'Create New' uses entered suffix and creates new period and batch.</div>
+                 <div id="periodBatchHint" class="muted" style="margin-top:8px">'Create' uses entered suffix and creates new period and batch.</div>
             </div>
           </div>
           <div class="support-field-wrap" id="periodSelectWrap" style="display:none">
@@ -199,13 +199,14 @@
             </div>
           </div>
           <div class="support-field-wrap">
-            <div class="field">
+              <div class="field">
               <label>Insurance Type</label>
               <div style="display:flex;gap:12px;align-items:center;margin-top:6px">
-                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="insuranceType" id="insuranceTypeSelect" value="select" checked /> Select</label>
-                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="insuranceType" id="insuranceTypeCreate" value="create" /> Create New</label>
+                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="insuranceType" id="insuranceTypeNone" value="none" checked /> None</label>
+                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="insuranceType" id="insuranceTypeSelect" value="select" /> Select</label>
+                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="insuranceType" id="insuranceTypeCreate" value="create" /> Create</label>
               </div>
-                 <div id="insuranceTypeHint" class="muted" style="margin-top:8px">'Create New' uses entered suffix and creates new Insurance.</div>
+                 <div id="insuranceTypeHint" class="muted" style="margin-top:8px">'Create' uses entered suffix and creates new Insurance. Select maps an existing insurance to the patient; None means no insurance.</div>
             </div>
           </div>
           <div class="support-field-wrap" id="insuranceSelectWrap" style="display:none">

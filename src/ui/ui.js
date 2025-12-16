@@ -36,6 +36,7 @@
   const periodBatchHint = document.getElementById('periodBatchHint');
   const insuranceTypeSelect = document.getElementById('insuranceTypeSelect');
   const insuranceTypeCreate = document.getElementById('insuranceTypeCreate');
+  const insuranceTypeNone = document.getElementById('insuranceTypeNone');
   const insuranceSelectWrap = document.getElementById('insuranceSelectWrap');
   const insuranceSelect = document.getElementById('insuranceSelect');
   const insuranceTypeHint = document.getElementById('insuranceTypeHint');
@@ -780,12 +781,14 @@
   function updateInsuranceVisibility() {
     try {
       const sel = document.querySelector('input[name="insuranceType"]:checked');
+      // show only when 'select' is chosen; hide for 'none' and 'create'
       const showSelect = sel && sel.value === 'select';
       if (insuranceSelectWrap) insuranceSelectWrap.style.display = showSelect ? '' : 'none';
     } catch (e) { /* ignore */ }
   }
   try { if (insuranceTypeSelect) insuranceTypeSelect.addEventListener('change', updateInsuranceVisibility); } catch (e) {}
   try { if (insuranceTypeCreate) insuranceTypeCreate.addEventListener('change', updateInsuranceVisibility); } catch (e) {}
+  try { if (insuranceTypeNone) insuranceTypeNone.addEventListener('change', updateInsuranceVisibility); } catch (e) {}
   // initial visibility
   updateInsuranceVisibility();
 
@@ -1174,7 +1177,7 @@
         , periodBatch: (() => { try { const sel = document.querySelector('input[name="periodBatch"]:checked'); return sel ? sel.value : 'select'; } catch (e) { return 'select' } })()
         , periodId: (() => { try { return periodSelect && periodSelect.value ? periodSelect.value : undefined; } catch (e) { return undefined } })()
         , batchId: (() => { try { return batchSelect && batchSelect.value ? batchSelect.value : undefined; } catch (e) { return undefined } })()
-        , insuranceType: (() => { try { const sel = document.querySelector('input[name="insuranceType"]:checked'); return sel ? sel.value : 'select'; } catch (e) { return 'select' } })()
+        , insuranceType: (() => { try { const sel = document.querySelector('input[name="insuranceType"]:checked'); return sel ? sel.value : 'none'; } catch (e) { return 'none' } })()
         , insuranceId: (() => { try { return (insuranceSelect && insuranceSelect.value && document.querySelector('input[name="insuranceType"]:checked')?.value === 'select') ? insuranceSelect.value : undefined; } catch (e) { return undefined } })()
         , insuranceName: (() => { try { return (insuranceSelect && insuranceSelect.selectedOptions && document.querySelector('input[name="insuranceType"]:checked')?.value === 'select') ? insuranceSelect.selectedOptions[0].textContent : undefined; } catch (e) { return undefined } })()
         , flowDepth: flowDepth ? Number(flowDepth.value) : 3
