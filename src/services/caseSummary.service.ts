@@ -7,7 +7,12 @@ import type { ICaseSummary, IPatient } from '../models/caseSummary.interface';
 
 const CASE_SUMMARY_ENDPOINT = '/api/CaseSummaryComplex/Gemini/UpsertCaseSummary';
 const templatePath = path.join(__dirname, '..', 'reqTemplates', 'caseSummary.req.json');
+const caseGuarantorTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'caseGuarantor.json');
+const caseInsurancesTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'caseInsurances.json');
+
 let cachedTemplate: ICaseSummary | null = null;
+let cachedCaseGuarantorTemplate: any | null = null;
+let cachedCaseInsurancesTemplate: any | null = null;
 
 function loadCaseSummaryTemplate(): ICaseSummary {
 	if (cachedTemplate) return cachedTemplate;
@@ -17,6 +22,28 @@ function loadCaseSummaryTemplate(): ICaseSummary {
 		return cachedTemplate;
 	} catch (err) {
 		throw new Error(`Failed to load case summary template: ${err}`);
+	}
+}
+
+function loadCaseGuarantorTemplate(): any {
+	if (cachedCaseGuarantorTemplate) return cachedCaseGuarantorTemplate;
+	try {
+		const raw = fs.readFileSync(caseGuarantorTemplatePath, 'utf8');
+		cachedCaseGuarantorTemplate = JSON.parse(raw);
+		return cachedCaseGuarantorTemplate;
+	} catch (err) {
+		throw new Error(`Failed to load case guarantor template: ${err}`);
+	}
+}
+
+function loadCaseInsurancesTemplate(): any {
+	if (cachedCaseInsurancesTemplate) return cachedCaseInsurancesTemplate;
+	try {
+		const raw = fs.readFileSync(caseInsurancesTemplatePath, 'utf8');
+		cachedCaseInsurancesTemplate = JSON.parse(raw);
+		return cachedCaseInsurancesTemplate;
+	} catch (err) {
+		throw new Error(`Failed to load case insurances template: ${err}`);
 	}
 }
 
@@ -112,6 +139,83 @@ function applyCreatePatientResponse(payload: ICaseSummary, patient?: CreatePatie
 	return payload;
 }
 
+type InsuranceMappingOptions = {
+	insuranceInsertResponse?: any;
+	insurancePlanResponse?: any;
+	facilityIdOverride?: number;
+	insuranceType?: string;
+};
+
+function applyInsuranceMapping(payload: ICaseSummary, opts?: InsuranceMappingOptions) {
+	if (!opts) return payload;
+	const { insuranceInsertResponse, insurancePlanResponse, facilityIdOverride, insuranceType } = opts;
+	const typeValue = typeof insuranceType === 'string' ? insuranceType.trim().toLowerCase() : '';
+	if (typeValue !== 'create') return payload;
+	if (!insuranceInsertResponse || typeof insuranceInsertResponse !== 'object') return payload;
+
+	const hasField = (obj: any, key: string) => Object.prototype.hasOwnProperty.call(obj, key);
+	// Safely clone templates so cached versions remain immutable
+	let guarantorTemplate: any;
+	let insTemplate: any;
+	try {
+		guarantorTemplate = JSON.parse(JSON.stringify(loadCaseGuarantorTemplate() || {}));
+		insTemplate = JSON.parse(JSON.stringify(loadCaseInsurancesTemplate() || {}));
+	} catch (e) {
+		// If template loading fails, leave payload unchanged
+		return payload;
+	}
+
+	try {
+		const guArr = Array.isArray(guarantorTemplate.caseGuarantor) ? guarantorTemplate.caseGuarantor : [];
+		if (guArr.length > 0 && guArr[0] && guArr[0].patientGuarantor) {
+			const pg = guArr[0].patientGuarantor as any;
+			if (hasField(insuranceInsertResponse, 'patientId')) pg.patientId = insuranceInsertResponse.patientId;
+			if (hasField(insuranceInsertResponse, 'firstName')) pg.firstName = insuranceInsertResponse.firstName;
+			if (hasField(insuranceInsertResponse, 'lastName')) pg.lastName = insuranceInsertResponse.lastName;
+		}
+		if (guArr.length) {
+			(payload as any).caseGuarantor = guArr;
+		}
+	} catch (e) {
+		// ignore guarantor mapping errors
+	}
+
+	try {
+		const insArr = Array.isArray(insTemplate.caseInsurances) ? insTemplate.caseInsurances : [];
+		if (insArr.length > 0 && insArr[0] && insArr[0].patientInsurance) {
+			const pi = insArr[0].patientInsurance as any;
+			const src = insuranceInsertResponse as any;
+			if (hasField(src, 'patientInsuranceId')) pi.patientInsuranceId = src.patientInsuranceId;
+			if (hasField(src, 'patientId')) pi.patientId = src.patientId;
+			if (hasField(src, 'insuredId')) pi.insuredId = src.insuredId;
+			if (hasField(src, 'insuranceId')) pi.insuranceId = src.insuranceId;
+			if (hasField(src, 'insuranceCarrierId')) pi.insuranceCarrierId = src.insuranceCarrierId;
+			if (hasField(src, 'insurancePlanId')) pi.insurancePlanId = src.insurancePlanId;
+			if (hasField(src, 'carrier')) pi.carrier = src.carrier;
+			if (hasField(src, 'firstName')) pi.firstName = src.firstName;
+			if (hasField(src, 'lastName')) pi.lastName = src.lastName;
+			if (hasField(src, 'insuranceClaimOfficeId')) pi.insuranceClaimOfficeId = src.insuranceClaimOfficeId;
+			if (typeof facilityIdOverride === 'number' && !Number.isNaN(facilityIdOverride)) {
+				pi.organizationId = facilityIdOverride;
+			}
+			const plan = insurancePlanResponse as any;
+			if (plan && typeof plan === 'object') {
+				const claimOfficeIdFromPlan = plan.claimOfficeId ?? plan.ClaimOfficeId;
+				if (claimOfficeIdFromPlan !== undefined && pi.insuranceClaimOffice && typeof pi.insuranceClaimOffice === 'object') {
+					pi.insuranceClaimOffice.claimOfficeId = claimOfficeIdFromPlan;
+				}
+			}
+		}
+		if (insArr.length) {
+			(payload as any).caseInsurances = insArr;
+		}
+	} catch (e) {
+		// ignore insurance mapping errors
+	}
+
+	return payload;
+}
+
 export type CreateCaseSummaryOptions = {
 	apiBaseUrl: string;
 	token: string;
@@ -170,6 +274,10 @@ export type CreateCaseSummaryOptions = {
 		editableAll?: boolean; // make all procedures editable
 		refreshDescriptions?: boolean; // sync modifiedProcedureDescription & procedureDisplayName from feeScheduleItem
 	};
+	insuranceInsertResponse?: any;
+	insurancePlanResponse?: any;
+	facilityIdOverride?: number;
+	insuranceType?: string;
 };
 
 const mergeArraysPreferSource = (_target: any[], source: any[]) => {
@@ -194,6 +302,10 @@ export async function createCaseSummary({
  	autoStampToday = true,
  	procedureAdjustments,
  	dos,
+ 	insuranceInsertResponse,
+	insurancePlanResponse,
+	facilityIdOverride,
+	insuranceType,
 }: CreateCaseSummaryOptions) {
 	if (!apiBaseUrl) throw new Error('apiBaseUrl is required');
 	if (!token) throw new Error('token is required');
@@ -203,6 +315,7 @@ export async function createCaseSummary({
 		? merge<ICaseSummary>(template, caseSummary, { arrayMerge: mergeArraysPreferSource })
 		: JSON.parse(JSON.stringify(template));
 	applyCreatePatientResponse(payload, patientResponse);
+	applyInsuranceMapping(payload, { insuranceInsertResponse, insurancePlanResponse, facilityIdOverride, insuranceType });
 	// apply room id/name overrides
 	if (roomIdOverride !== undefined) payload.roomId = roomIdOverride;
 	// prefer explicit override, then patientResponse.roomName, then template

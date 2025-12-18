@@ -127,6 +127,8 @@ app.post('/seed', (req, res) => {
 					selectedPeriodId: typeof opts.periodId !== 'undefined' ? Number(opts.periodId) : undefined,
 					selectedBatchId: typeof opts.batchId !== 'undefined' ? Number(opts.batchId) : undefined,
 					insuranceInsertOverrides: insuranceOverrides,
+						insuranceType: opts.insuranceType,
+						insuranceCreateResult: insuranceResult || undefined,
 				});
 				const runElapsedMs = Date.now() - runStart;
 				return res.json({ ok: true, result: svcRes, insuranceResult, tokenPresent: !!token, logs, runElapsedMs });

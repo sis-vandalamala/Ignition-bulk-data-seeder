@@ -7,7 +7,7 @@ import createCaseSummary from './caseSummary.service';
 import { requestRecordLock, releaseRecordLock, getPeriodBatches, createPeriod, createBatch } from './support.service';
 import { runDischargeFlow } from './discharge.service';
 import codingChargeEntry, { type ChargeEntryPeriodBatch } from './codingChargeEntry.service';
-import { insertInsuranceGemini, createInsertInsurancePayload, type InsuranceInsertOverrides } from './insurance.service';
+import { insertInsuranceGemini, createInsertInsurancePayload, type InsuranceInsertOverrides, type CreateInsuranceResult } from './insurance.service';
 import type { IGetDuplicatePatient } from '../models/getDuplicatePatients.interface';
 
 // module loaded (no debug log)
@@ -393,6 +393,8 @@ export type CreateBasicPatientsOptions = {
 	selectedBatchId?: number;
 	insuranceInsertOverrides?: InsuranceInsertOverrides;
 	insertInsuranceTimeoutMs?: number;
+	insuranceType?: string;
+	insuranceCreateResult?: CreateInsuranceResult;
 };
 
 export type CreateBasicPatientResult = {
@@ -601,6 +603,10 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 								feeScheduleOverride: (opts as any).feeScheduleOverride,
 								dos: opts.dos,
 								logFn,
+								insuranceInsertResponse: insertInsuranceResponse,
+								insurancePlanResponse: opts.insuranceCreateResult ? opts.insuranceCreateResult.plan : undefined,
+								facilityIdOverride: opts.facilityId,
+								insuranceType: opts.insuranceType,
 							});
 										outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: cs, insertInsuranceResponse, insertInsuranceError } as any;
 									// release record lock for this patient
