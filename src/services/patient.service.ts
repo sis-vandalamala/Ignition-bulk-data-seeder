@@ -7,6 +7,7 @@ import createCaseSummary from './caseSummary.service';
 import { requestRecordLock, releaseRecordLock, getPeriodBatches, createPeriod, createBatch } from './support.service';
 import { runDischargeFlow } from './discharge.service';
 import codingChargeEntry, { type ChargeEntryPeriodBatch } from './codingChargeEntry.service';
+import { insertInsuranceGemini, createInsertInsurancePayload, type InsuranceInsertOverrides } from './insurance.service';
 import type { IGetDuplicatePatient } from '../models/getDuplicatePatients.interface';
 
 // module loaded (no debug log)
@@ -65,6 +66,15 @@ function firstValidNumber(values: Array<any>) {
 	for (const value of values) {
 		const num = Number(value);
 		if (!Number.isNaN(num) && num > 0) return num;
+	}
+	return undefined;
+}
+
+function firstNonEmptyString(values: Array<any>) {
+	for (const value of values) {
+		if (typeof value !== 'string') continue;
+		const trimmed = value.trim();
+		if (trimmed) return trimmed;
 	}
 	return undefined;
 }
@@ -381,6 +391,8 @@ export type CreateBasicPatientsOptions = {
 	periodBatchMode?: PeriodBatchMode;
 	selectedPeriodId?: number;
 	selectedBatchId?: number;
+	insuranceInsertOverrides?: InsuranceInsertOverrides;
+	insertInsuranceTimeoutMs?: number;
 };
 
 export type CreateBasicPatientResult = {
@@ -390,6 +402,8 @@ export type CreateBasicPatientResult = {
 	fullPatient?: any;
 	createPatientResponse?: any;
 	caseSummaryResponse?: any;
+	insertInsuranceResponse?: any;
+	insertInsuranceError?: string;
 	error?: string;
 };
 
@@ -460,6 +474,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 		Accept: 'text/json',
 		token,
 	};
+	const insertInsuranceTimeout = typeof opts.insertInsuranceTimeoutMs === 'number' ? opts.insertInsuranceTimeoutMs : 15000;
 
 	const tpl = loadTemplate();
 	const pickAutoName = isAutoMode ? createAutoNameFactory() : null;
@@ -494,6 +509,8 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 				try {
 					const full = await getPatient(apiBaseUrl, thisPid, token, logFn);
 					outcomes[index - 1] = { index, request, response, fullPatient: full } as any;
+					let insertInsuranceResponse: any = undefined;
+					let insertInsuranceError: string | undefined;
 					try {
 								// Request a record lock for this patient before creating
 								let lockRes: any = null;
@@ -526,6 +543,51 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 									(patientSource as any).gender = srcGender;
 								}
 							} catch (e) {}
+					if (opts.insuranceInsertOverrides) {
+						try {
+							const patientIdForInsert = firstValidNumber([
+								patientSource && patientSource.patientId,
+								created && created.response ? (created.response as any).patientId : undefined,
+								created && created.request ? (created.request as any).patientId : undefined,
+								full ? (full as any).patientId : undefined,
+								thisPid,
+							]);
+							if (!patientIdForInsert) {
+								insertInsuranceError = 'Missing patientId for insertInsuranceGemini payload';
+							} else {
+								const patientFirstName = firstNonEmptyString([
+									patientSource && patientSource.firstName,
+									created && created.response ? (created.response as any).firstName : undefined,
+									created && created.request ? (created.request as any).firstName : undefined,
+									full ? (full as any).firstName : undefined,
+									request.firstName,
+								]);
+								const patientLastName = firstNonEmptyString([
+									patientSource && patientSource.lastName,
+									created && created.response ? (created.response as any).lastName : undefined,
+									created && created.request ? (created.request as any).lastName : undefined,
+									full ? (full as any).lastName : undefined,
+									request.lastName,
+								]);
+								const payload = createInsertInsurancePayload({
+									...(opts.insuranceInsertOverrides ?? {}),
+									patientId: patientIdForInsert,
+									firstName: patientFirstName ?? request.firstName,
+									lastName: patientLastName ?? request.lastName,
+								});
+								insertInsuranceResponse = await insertInsuranceGemini({
+									apiBaseUrl,
+									token,
+									payload,
+									timeoutMs: insertInsuranceTimeout,
+									extraHeaders: opts.extraHeaders,
+									logFn,
+								});
+							}
+						} catch (insertErr) {
+							insertInsuranceError = insertErr && (insertErr as any).message ? (insertErr as any).message : String(insertErr);
+						}
+					}
 							const cs = await createCaseSummary({
 								apiBaseUrl,
 								token,
@@ -540,7 +602,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 								dos: opts.dos,
 								logFn,
 							});
-									outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: cs } as any;
+										outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: cs, insertInsuranceResponse, insertInsuranceError } as any;
 									// release record lock for this patient
 									try {
 										const rel = await releaseRecordLock((patientSource && patientSource.patientId) ? (patientSource.patientId as number) : thisPid, token, apiBaseUrl);
@@ -576,7 +638,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 							try {
 								const errAny = csErr as any;
 								const msg = errAny && errAny.message ? errAny.message : String(errAny);
-								outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: { error: msg } } as any;
+								outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: { error: msg }, insertInsuranceResponse, insertInsuranceError } as any;
 							} catch (e) {}
 						}
 					} catch (createErr) {

@@ -4,7 +4,8 @@ import { loginUser, logoutUser } from './auth';
 import { setGlobalApiLogger } from '../src/utils/api';
 import { postJson } from '../src/utils/api';
 import { createBasicPatients } from '../src/services/patient.service';
-import { createInsurance } from '../src/services/insurance.service';
+import { createInsurance, extractInsuranceInsertOverrides } from '../src/services/insurance.service';
+import type { InsuranceInsertOverrides } from '../src/services/insurance.service';
 import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID, getFeeSchedules, getPeriodBatches, getInsuranceCarriers } from '../src/services/support.service';
 
 const app = express();
@@ -86,6 +87,7 @@ app.post('/seed', (req, res) => {
 				// determine if physician override provided
 				const hasPhysId = typeof opts.physicianId === 'number' && !Number.isNaN(opts.physicianId);
 				let insuranceResult: any = null;
+				let insuranceOverrides: InsuranceInsertOverrides | undefined;
 				const shouldCreateInsurance = (opts.mode !== 'auto') && String(opts.insuranceType || '').toLowerCase() === 'create';
 				if (shouldCreateInsurance) {
 					if (!opts.suffix || !String(opts.suffix).trim()) throw new Error('Suffix is required to create insurance');
@@ -97,6 +99,7 @@ app.post('/seed', (req, res) => {
 						extraHeaders,
 						logFn: logger,
 					});
+					insuranceOverrides = extractInsuranceInsertOverrides(insuranceResult);
 				}
 				const svcRes = await createBasicPatients({
 					apiBaseUrl: opts.apiUrl || opts.url,
@@ -123,6 +126,7 @@ app.post('/seed', (req, res) => {
 					periodBatchMode: opts.mode === 'auto' ? 'auto' : (opts.periodBatch as 'select' | 'create' | undefined),
 					selectedPeriodId: typeof opts.periodId !== 'undefined' ? Number(opts.periodId) : undefined,
 					selectedBatchId: typeof opts.batchId !== 'undefined' ? Number(opts.batchId) : undefined,
+					insuranceInsertOverrides: insuranceOverrides,
 				});
 				const runElapsedMs = Date.now() - runStart;
 				return res.json({ ok: true, result: svcRes, insuranceResult, tokenPresent: !!token, logs, runElapsedMs });

@@ -19,7 +19,9 @@ export type SaveInsuranceOptions = {
 };
 
 const SAVE_INSURANCE_TEMPLATE_PATH = path.join(__dirname, '..', 'reqTemplates', 'saveInsuranceCarrier.json');
+const INSERT_INSURANCE_TEMPLATE_PATH = path.join(__dirname, '..', 'reqTemplates', 'insertInsurance.json');
 let cachedSaveInsuranceTemplate: any | null = null;
+let cachedInsertInsuranceTemplate: any | null = null;
 
 function loadSaveInsuranceTemplate() {
   if (cachedSaveInsuranceTemplate) return cachedSaveInsuranceTemplate;
@@ -30,6 +32,21 @@ function loadSaveInsuranceTemplate() {
   } catch (err) {
     throw new Error(`Failed to load saveInsuranceCarrier template: ${err}`);
   }
+}
+
+function loadInsertInsuranceTemplate() {
+  if (cachedInsertInsuranceTemplate) return cachedInsertInsuranceTemplate;
+  try {
+    const raw = fs.readFileSync(INSERT_INSURANCE_TEMPLATE_PATH, 'utf8');
+    cachedInsertInsuranceTemplate = JSON.parse(raw);
+    return cachedInsertInsuranceTemplate;
+  } catch (err) {
+    throw new Error(`Failed to load insertInsurance template: ${err}`);
+  }
+}
+
+function cloneInsertInsuranceTemplate() {
+  return JSON.parse(JSON.stringify(loadInsertInsuranceTemplate()));
 }
 
 function buildHeaders(token: string, extra?: Record<string, string>) {
@@ -53,6 +70,24 @@ function formatErrorMessage(err: any) {
   } catch (e) {
     return String(err);
   }
+}
+
+function coerceNumber(...values: Array<any>) {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const num = Number(value);
+    if (!Number.isNaN(num)) return num;
+  }
+  return undefined;
+}
+
+function pickFirstString(...values: Array<any>) {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
 }
 
 export async function saveInsuranceCarrier({ apiBaseUrl, token, payload, timeoutMs = 10000, extraHeaders, logFn }: SaveInsuranceOptions) {
@@ -308,12 +343,119 @@ export async function saveInsurancePlan({ apiBaseUrl, token, payload, timeoutMs 
   }
 }
 
+export type InsertInsuranceGeminiOptions = {
+  apiBaseUrl?: string; // optional base to build URL
+  fullUrl?: string; // optional full URL (uses this if provided)
+  token: string;
+  payload?: any;
+  timeoutMs?: number;
+  extraHeaders?: Record<string, string>;
+  logFn?: (entry: ApiLogEntry) => void;
+};
+
+/**
+ * Calls the external Gemini Insert insurance endpoint.
+ * If `fullUrl` is provided it will be used; otherwise `apiBaseUrl` + fixed path is used.
+ */
+export async function insertInsuranceGemini({ apiBaseUrl, fullUrl, token, payload = {}, timeoutMs = 10000, extraHeaders, logFn }: InsertInsuranceGeminiOptions) {
+  if (!fullUrl && !apiBaseUrl) throw new Error('fullUrl or apiBaseUrl is required');
+  if (!token) throw new Error('token is required');
+  const url = fullUrl ? String(fullUrl) : `${String(apiBaseUrl).replace(/\/$/, '')}/api/Insurance/Gemini/Insert/0`;
+  const headers = buildHeaders(token, extraHeaders);
+  // The external endpoint in the example expects `text/json` content-type/accept
+  headers['accept'] = 'text/json';
+  headers['content-type'] = 'text/json';
+  const bodyPayload = payload && typeof payload === 'object' ? payload : cloneInsertInsuranceTemplate();
+  const start = Date.now();
+  const startIso = new Date(start).toISOString();
+  try {
+    const res = await axios.post(url, bodyPayload, { timeout: timeoutMs, headers });
+    const end = Date.now();
+    const entry: ApiLogEntry = { url, method: 'POST', status: res.status, durationMs: end - start, startTime: startIso, endTime: new Date(end).toISOString(), timestamp: new Date(end).toISOString() };
+    try { if (logFn) logFn(entry); } catch (e) {}
+    return res.data;
+  } catch (err: any) {
+    const end = Date.now();
+    const resp = err && err.response ? err.response : undefined;
+    const statusVal = resp && resp.status ? resp.status : 'error';
+    const entry: ApiLogEntry = { url, method: 'POST', status: statusVal, durationMs: end - start, error: err && err.message ? err.message : String(err), startTime: startIso, endTime: new Date(end).toISOString(), timestamp: new Date(end).toISOString() };
+    try { if (logFn) logFn(entry); } catch (e) {}
+    throw err;
+  }
+}
+
+export type InsuranceInsertOverrides = {
+  insuranceCarrierId?: number;
+  carrier?: string;
+  insuranceId?: number | string;
+  insuranceClaimOfficeId?: number;
+};
+
+export type InsertInsurancePayloadOverrides = InsuranceInsertOverrides & {
+  patientId?: number;
+  firstName?: string;
+  lastName?: string;
+};
+
+export function createInsertInsurancePayload(overrides?: InsertInsurancePayloadOverrides) {
+  const payload = cloneInsertInsuranceTemplate();
+  if (!overrides) return payload;
+  if (overrides.patientId !== undefined) payload.patientId = overrides.patientId;
+  if (overrides.firstName !== undefined) payload.firstName = overrides.firstName;
+  if (overrides.lastName !== undefined) payload.lastName = overrides.lastName;
+  if (overrides.insuranceCarrierId !== undefined) payload.insuranceCarrierId = overrides.insuranceCarrierId;
+  if (overrides.carrier !== undefined) payload.carrier = overrides.carrier;
+  if (overrides.insuranceId !== undefined) payload.insuranceId = overrides.insuranceId;
+  if (overrides.insuranceClaimOfficeId !== undefined) payload.insuranceClaimOfficeId = overrides.insuranceClaimOfficeId;
+  return payload;
+}
+
+export type CreateInsuranceResult = {
+  carrier: any;
+  insertClaimOffice: any;
+  updateClaimOffice: any;
+  plan: any;
+};
+
+export function extractInsuranceInsertOverrides(result?: CreateInsuranceResult | null): InsuranceInsertOverrides | undefined {
+  if (!result) return undefined;
+  const overrides: InsuranceInsertOverrides = {};
+  const carrier = result.carrier ?? {};
+  const plan = result.plan ?? {};
+  const insertClaim = result.insertClaimOffice ?? {};
+  const updateClaim = result.updateClaimOffice ?? {};
+  const carrierId = coerceNumber(carrier.insuranceCarrierId, carrier.insuranceCarrierObjectId, carrier.insuranceCarrierID);
+  if (typeof carrierId === 'number') overrides.insuranceCarrierId = carrierId;
+  const carrierName = pickFirstString(carrier.insuranceCarrierName, carrier.carrier, carrier.carrierName, carrier.name);
+  if (carrierName) overrides.carrier = carrierName;
+  const insuranceIdCandidates = [plan.insuranceId, plan.insurancePlanId, plan.planId, plan.insurancePlanID, carrier.insuranceId];
+  for (const candidate of insuranceIdCandidates) {
+    if (candidate === undefined || candidate === null) continue;
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) {
+        overrides.insuranceId = candidate;
+        break;
+      }
+    } else {
+      overrides.insuranceId = candidate;
+      break;
+    }
+  }
+  const claimOfficeId = coerceNumber(insertClaim.insuranceClaimOfficeId, insertClaim.claimOfficeId, updateClaim.insuranceClaimOfficeId, updateClaim.claimOfficeId);
+  if (typeof claimOfficeId === 'number') overrides.insuranceClaimOfficeId = claimOfficeId;
+  return Object.keys(overrides).length ? overrides : undefined;
+}
+
 export default {
   saveInsuranceCarrier,
   insertInsuranceClaimOffice,
   updateInsuranceClaimOffice,
   saveInsurancePlan,
+  insertInsuranceGemini,
   createInsurance,
+  createInsertInsurancePayload,
+  extractInsuranceInsertOverrides,
 };
 
 export type CreateInsuranceOptions = {
@@ -330,7 +472,7 @@ export type CreateInsuranceOptions = {
   logFn?: (entry: ApiLogEntry) => void;
 };
 
-export async function createInsurance(opts: CreateInsuranceOptions) {
+export async function createInsurance(opts: CreateInsuranceOptions): Promise<CreateInsuranceResult> {
   if (!opts || typeof opts !== 'object') throw new Error('options are required');
   const { apiBaseUrl, token, suffix, timeoutMs = 20000, extraHeaders, logFn } = opts;
   if (!apiBaseUrl) throw new Error('apiBaseUrl is required');
