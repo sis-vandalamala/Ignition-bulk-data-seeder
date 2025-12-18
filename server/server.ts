@@ -4,6 +4,7 @@ import { loginUser, logoutUser } from './auth';
 import { setGlobalApiLogger } from '../src/utils/api';
 import { postJson } from '../src/utils/api';
 import { createBasicPatients } from '../src/services/patient.service';
+import { createInsurance } from '../src/services/insurance.service';
 import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID, getFeeSchedules, getPeriodBatches, getInsuranceCarriers } from '../src/services/support.service';
 
 const app = express();
@@ -84,6 +85,19 @@ app.post('/seed', (req, res) => {
 				const hasApptId = typeof opts.appointmentTypeId === 'number' && !Number.isNaN(opts.appointmentTypeId);
 				// determine if physician override provided
 				const hasPhysId = typeof opts.physicianId === 'number' && !Number.isNaN(opts.physicianId);
+				let insuranceResult: any = null;
+				const shouldCreateInsurance = (opts.mode !== 'auto') && String(opts.insuranceType || '').toLowerCase() === 'create';
+				if (shouldCreateInsurance) {
+					if (!opts.suffix || !String(opts.suffix).trim()) throw new Error('Suffix is required to create insurance');
+					insuranceResult = await createInsurance({
+						apiBaseUrl: opts.apiUrl || opts.url,
+						token,
+						suffix: opts.suffix,
+						timeoutMs: 60000,
+						extraHeaders,
+						logFn: logger,
+					});
+				}
 				const svcRes = await createBasicPatients({
 					apiBaseUrl: opts.apiUrl || opts.url,
 					token,
@@ -111,7 +125,7 @@ app.post('/seed', (req, res) => {
 					selectedBatchId: typeof opts.batchId !== 'undefined' ? Number(opts.batchId) : undefined,
 				});
 				const runElapsedMs = Date.now() - runStart;
-				return res.json({ ok: true, result: svcRes, tokenPresent: !!token, logs, runElapsedMs });
+				return res.json({ ok: true, result: svcRes, insuranceResult, tokenPresent: !!token, logs, runElapsedMs });
 			}
 
 			// fallback demo behavior
