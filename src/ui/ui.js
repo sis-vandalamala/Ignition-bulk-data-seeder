@@ -34,7 +34,6 @@
   const periodSelect = document.getElementById('periodSelect');
   const batchSelect = document.getElementById('batchSelect');
   const periodBatchHint = document.getElementById('periodBatchHint');
-  const insuranceTypeSelect = document.getElementById('insuranceTypeSelect');
   const insuranceTypeCreate = document.getElementById('insuranceTypeCreate');
   const insuranceTypeNone = document.getElementById('insuranceTypeNone');
   const insuranceSelectWrap = document.getElementById('insuranceSelectWrap');
@@ -790,15 +789,15 @@
   function updateInsuranceVisibility() {
     try {
       const sel = document.querySelector('input[name="insuranceType"]:checked');
-      // show only when 'select' is chosen; hide for 'none' and 'create'
-      const showSelect = sel && sel.value === 'select';
+      // show select only when 'create' is NOT chosen (i.e., for 'none' we hide, for 'create' we hide)
+      // Since 'Select' option was removed, only show when explicit mapping is needed — keep hidden by default.
+      const showSelect = false;
       if (insuranceSelectWrap) insuranceSelectWrap.style.display = showSelect ? '' : 'none';
     } catch (e) { /* ignore */ }
   }
-  try { if (insuranceTypeSelect) insuranceTypeSelect.addEventListener('change', updateInsuranceVisibility); } catch (e) {}
   try { if (insuranceTypeCreate) insuranceTypeCreate.addEventListener('change', updateInsuranceVisibility); } catch (e) {}
   try { if (insuranceTypeNone) insuranceTypeNone.addEventListener('change', updateInsuranceVisibility); } catch (e) {}
-  // initial visibility
+  // initial visibility: hide insurance select since 'Select' option removed
   updateInsuranceVisibility();
 
   // when period changes, update batch select
