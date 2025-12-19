@@ -39,6 +39,8 @@
   const insuranceSelectWrap = document.getElementById('insuranceSelectWrap');
   const insuranceSelect = document.getElementById('insuranceSelect');
   const insuranceTypeHint = document.getElementById('insuranceTypeHint');
+  const insuranceCreatePriorityWrap = document.getElementById('insuranceCreatePriorityWrap');
+  const insurancePriority = document.getElementById('insurancePriority');
   const dosInput = $('dos');
   const runBtn = $('runBtn');
   const autoRunBtn = $('autoRunBtn');
@@ -789,8 +791,10 @@
   function updateInsuranceVisibility() {
     try {
       const sel = document.querySelector('input[name="insuranceType"]:checked');
-      // show select only when 'create' is NOT chosen (i.e., for 'none' we hide, for 'create' we hide)
-      // Since 'Select' option was removed, only show when explicit mapping is needed — keep hidden by default.
+      // show/hide create-priority UI when insuranceType is 'create'
+      const isCreate = sel && sel.value === 'create';
+      if (insuranceCreatePriorityWrap) insuranceCreatePriorityWrap.style.display = isCreate ? '' : 'none';
+      // keep insuranceSelectWrap hidden by default (mapping via select not used)
       const showSelect = false;
       if (insuranceSelectWrap) insuranceSelectWrap.style.display = showSelect ? '' : 'none';
     } catch (e) { /* ignore */ }
@@ -1188,6 +1192,7 @@
         , insuranceType: (() => { try { const sel = document.querySelector('input[name="insuranceType"]:checked'); return sel ? sel.value : 'none'; } catch (e) { return 'none' } })()
         , insuranceId: (() => { try { return (insuranceSelect && insuranceSelect.value && document.querySelector('input[name="insuranceType"]:checked')?.value === 'select') ? insuranceSelect.value : undefined; } catch (e) { return undefined } })()
         , insuranceName: (() => { try { return (insuranceSelect && insuranceSelect.selectedOptions && document.querySelector('input[name="insuranceType"]:checked')?.value === 'select') ? insuranceSelect.selectedOptions[0].textContent : undefined; } catch (e) { return undefined } })()
+        , insurancePriority: (() => { try { return (insuranceCreatePriorityWrap && insurancePriority && document.querySelector('input[name="insuranceType"]:checked')?.value === 'create') ? insurancePriority.value : undefined; } catch (e) { return undefined } })()
         , flowDepth: flowDepth ? Number(flowDepth.value) : 3
       }
     };

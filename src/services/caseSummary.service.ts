@@ -140,18 +140,24 @@ function applyCreatePatientResponse(payload: ICaseSummary, patient?: CreatePatie
 }
 
 type InsuranceMappingOptions = {
-	insuranceInsertResponse?: any;
-	insurancePlanResponse?: any;
+	insuranceInsertResponse?: any; // backward compatibility: single response
+	insuranceInsertResponses?: any[]; // preferred: multiple responses
+	insurancePlanResponse?: any; // backward compatibility: single plan
+	insurancePlanResponses?: any[]; // preferred: multiple plans
 	facilityIdOverride?: number;
 	insuranceType?: string;
 };
 
 function applyInsuranceMapping(payload: ICaseSummary, opts?: InsuranceMappingOptions) {
 	if (!opts) return payload;
-	const { insuranceInsertResponse, insurancePlanResponse, facilityIdOverride, insuranceType } = opts;
+	const { insuranceInsertResponse, insuranceInsertResponses, insurancePlanResponse, insurancePlanResponses, facilityIdOverride, insuranceType } = opts;
 	const typeValue = typeof insuranceType === 'string' ? insuranceType.trim().toLowerCase() : '';
 	if (typeValue !== 'create') return payload;
-	if (!insuranceInsertResponse || typeof insuranceInsertResponse !== 'object') return payload;
+	// normalize to array of insert responses
+	const insertList: any[] = Array.isArray(insuranceInsertResponses)
+		? insuranceInsertResponses.filter(Boolean)
+		: (insuranceInsertResponse && typeof insuranceInsertResponse === 'object') ? [insuranceInsertResponse] : [];
+	if (!insertList.length) return payload;
 
 	const hasField = (obj: any, key: string) => Object.prototype.hasOwnProperty.call(obj, key);
 	// Safely clone templates so cached versions remain immutable
@@ -167,11 +173,37 @@ function applyInsuranceMapping(payload: ICaseSummary, opts?: InsuranceMappingOpt
 
 	try {
 		const guArr = Array.isArray(guarantorTemplate.caseGuarantor) ? guarantorTemplate.caseGuarantor : [];
+		// Primary guarantor (index 0) mapping
 		if (guArr.length > 0 && guArr[0] && guArr[0].patientGuarantor) {
 			const pg = guArr[0].patientGuarantor as any;
-			if (hasField(insuranceInsertResponse, 'patientId')) pg.patientId = insuranceInsertResponse.patientId;
-			if (hasField(insuranceInsertResponse, 'firstName')) pg.firstName = insuranceInsertResponse.firstName;
-			if (hasField(insuranceInsertResponse, 'lastName')) pg.lastName = insuranceInsertResponse.lastName;
+			const src0 = insertList[0] || insuranceInsertResponse;
+			if (src0 && hasField(src0, 'patientId')) pg.patientId = src0.patientId;
+			if (src0 && hasField(src0, 'firstName')) pg.firstName = src0.firstName;
+			if (src0 && hasField(src0, 'lastName')) pg.lastName = src0.lastName;
+			// keep isSelf true for primary row per template
+			if (typeof (guArr[0] as any).isSelf !== 'boolean') (guArr[0] as any).isSelf = true;
+			if (typeof (guArr[0] as any).isActive !== 'boolean') (guArr[0] as any).isActive = true;
+		}
+		// If there is secondary insurance, ensure second guarantor row is active and self
+		if (insertList.length > 1) {
+			// Ensure the row exists
+			if (!guArr[1]) {
+				guArr[1] = { sortOrder: 2, isActive: true, isSelf: true, patientGuarantor: {} } as any;
+			}
+			const g2 = guArr[1] as any;
+			g2.isActive = true;
+			g2.isSelf = true;
+			g2.sortOrder = typeof g2.sortOrder === 'number' ? g2.sortOrder : 2;
+			if (!g2.patientGuarantor) g2.patientGuarantor = {};
+			const pg2 = g2.patientGuarantor as any;
+			const src = insertList[1] || insertList[0] || insuranceInsertResponse;
+			if (src && hasField(src, 'patientId')) pg2.patientId = src.patientId;
+			if (src && hasField(src, 'firstName')) pg2.firstName = src.firstName;
+			if (src && hasField(src, 'lastName')) pg2.lastName = src.lastName;
+			// If gender exists on src, copy; otherwise leave template/default
+			if (src && hasField(src, 'gender') && typeof src.gender === 'string' && src.gender.trim() !== '') pg2.gender = src.gender;
+			// Ensure relationship remains Self
+			if (typeof pg2.patientRelationship === 'undefined') pg2.patientRelationship = 'Self';
 		}
 		if (guArr.length) {
 			(payload as any).caseGuarantor = guArr;
@@ -182,9 +214,12 @@ function applyInsuranceMapping(payload: ICaseSummary, opts?: InsuranceMappingOpt
 
 	try {
 		const insArr = Array.isArray(insTemplate.caseInsurances) ? insTemplate.caseInsurances : [];
-		if (insArr.length > 0 && insArr[0] && insArr[0].patientInsurance) {
-			const pi = insArr[0].patientInsurance as any;
-			const src = insuranceInsertResponse as any;
+		// ensure we have at least as many slots as responses (template already has 3)
+		for (let i = 0; i < insertList.length && i < insArr.length; i += 1) {
+			const slot = insArr[i];
+			if (!slot || !slot.patientInsurance) continue;
+			const pi = slot.patientInsurance as any;
+			const src = insertList[i] as any;
 			if (hasField(src, 'patientInsuranceId')) pi.patientInsuranceId = src.patientInsuranceId;
 			if (hasField(src, 'patientId')) pi.patientId = src.patientId;
 			if (hasField(src, 'insuredId')) pi.insuredId = src.insuredId;
@@ -198,7 +233,7 @@ function applyInsuranceMapping(payload: ICaseSummary, opts?: InsuranceMappingOpt
 			if (typeof facilityIdOverride === 'number' && !Number.isNaN(facilityIdOverride)) {
 				pi.organizationId = facilityIdOverride;
 			}
-			const plan = insurancePlanResponse as any;
+			const plan = Array.isArray(insurancePlanResponses) ? (insurancePlanResponses[i] as any) : (insurancePlanResponse as any);
 			if (plan && typeof plan === 'object') {
 				const claimOfficeIdFromPlan = plan.claimOfficeId ?? plan.ClaimOfficeId;
 				if (claimOfficeIdFromPlan !== undefined && pi.insuranceClaimOffice && typeof pi.insuranceClaimOffice === 'object') {
@@ -274,8 +309,12 @@ export type CreateCaseSummaryOptions = {
 		editableAll?: boolean; // make all procedures editable
 		refreshDescriptions?: boolean; // sync modifiedProcedureDescription & procedureDisplayName from feeScheduleItem
 	};
+	// Backward-compatible single insurance mapping
 	insuranceInsertResponse?: any;
 	insurancePlanResponse?: any;
+	// Preferred: multiple insurance mappings
+	insuranceInsertResponses?: any[];
+	insurancePlanResponses?: any[];
 	facilityIdOverride?: number;
 	insuranceType?: string;
 };
@@ -302,8 +341,10 @@ export async function createCaseSummary({
  	autoStampToday = true,
  	procedureAdjustments,
  	dos,
- 	insuranceInsertResponse,
+	insuranceInsertResponse,
+	insuranceInsertResponses,
 	insurancePlanResponse,
+	insurancePlanResponses,
 	facilityIdOverride,
 	insuranceType,
 }: CreateCaseSummaryOptions) {
@@ -315,7 +356,7 @@ export async function createCaseSummary({
 		? merge<ICaseSummary>(template, caseSummary, { arrayMerge: mergeArraysPreferSource })
 		: JSON.parse(JSON.stringify(template));
 	applyCreatePatientResponse(payload, patientResponse);
-	applyInsuranceMapping(payload, { insuranceInsertResponse, insurancePlanResponse, facilityIdOverride, insuranceType });
+	applyInsuranceMapping(payload, { insuranceInsertResponse, insuranceInsertResponses, insurancePlanResponse, insurancePlanResponses, facilityIdOverride, insuranceType });
 	// apply room id/name overrides
 	if (roomIdOverride !== undefined) payload.roomId = roomIdOverride;
 	// prefer explicit override, then patientResponse.roomName, then template

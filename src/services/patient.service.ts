@@ -392,9 +392,13 @@ export type CreateBasicPatientsOptions = {
 	selectedPeriodId?: number;
 	selectedBatchId?: number;
 	insuranceInsertOverrides?: InsuranceInsertOverrides;
+	// Support multiple insurance overrides (primary/secondary/tertiary)
+	insuranceInsertOverridesList?: InsuranceInsertOverrides[];
 	insertInsuranceTimeoutMs?: number;
 	insuranceType?: string;
-	insuranceCreateResult?: CreateInsuranceResult;
+	insuranceCreateResult?: CreateInsuranceResult; // backward-compatible single
+	// Multiple created insurance results (for plans/claim office mapping)
+	insuranceCreateResults?: CreateInsuranceResult[];
 };
 
 export type CreateBasicPatientResult = {
@@ -404,7 +408,8 @@ export type CreateBasicPatientResult = {
 	fullPatient?: any;
 	createPatientResponse?: any;
 	caseSummaryResponse?: any;
-	insertInsuranceResponse?: any;
+	insertInsuranceResponse?: any; // backward-compatible single
+	insertInsuranceResponses?: any[]; // preferred multiple
 	insertInsuranceError?: string;
 	error?: string;
 };
@@ -512,6 +517,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 					const full = await getPatient(apiBaseUrl, thisPid, token, logFn);
 					outcomes[index - 1] = { index, request, response, fullPatient: full } as any;
 					let insertInsuranceResponse: any = undefined;
+					let insertInsuranceResponses: any[] | undefined = undefined;
 					let insertInsuranceError: string | undefined;
 					try {
 								// Request a record lock for this patient before creating
@@ -545,7 +551,55 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 									(patientSource as any).gender = srcGender;
 								}
 							} catch (e) {}
-					if (opts.insuranceInsertOverrides) {
+					if (Array.isArray(opts.insuranceInsertOverridesList) && opts.insuranceInsertOverridesList.length) {
+						try {
+							insertInsuranceResponses = [];
+							const patientIdForInsert = firstValidNumber([
+								patientSource && patientSource.patientId,
+								created && created.response ? (created.response as any).patientId : undefined,
+								created && created.request ? (created.request as any).patientId : undefined,
+								full ? (full as any).patientId : undefined,
+								thisPid,
+							]);
+							if (!patientIdForInsert) {
+								insertInsuranceError = 'Missing patientId for insertInsuranceGemini payload';
+							} else {
+								const patientFirstName = firstNonEmptyString([
+									patientSource && patientSource.firstName,
+									created && created.response ? (created.response as any).firstName : undefined,
+									created && created.request ? (created.request as any).firstName : undefined,
+									full ? (full as any).firstName : undefined,
+									request.firstName,
+								]);
+								const patientLastName = firstNonEmptyString([
+									patientSource && patientSource.lastName,
+									created && created.response ? (created.response as any).lastName : undefined,
+									created && created.request ? (created.request as any).lastName : undefined,
+									full ? (full as any).lastName : undefined,
+									request.lastName,
+								]);
+								for (const ov of opts.insuranceInsertOverridesList) {
+									const payload = createInsertInsurancePayload({
+										...(ov ?? {}),
+										patientId: patientIdForInsert,
+										firstName: patientFirstName ?? request.firstName,
+										lastName: patientLastName ?? request.lastName,
+									});
+									const resp = await insertInsuranceGemini({
+										apiBaseUrl,
+										token,
+										payload,
+										timeoutMs: insertInsuranceTimeout,
+										extraHeaders: opts.extraHeaders,
+										logFn,
+									});
+									insertInsuranceResponses.push(resp);
+								}
+							}
+						} catch (insertErr) {
+							insertInsuranceError = insertErr && (insertErr as any).message ? (insertErr as any).message : String(insertErr);
+						}
+					} else if (opts.insuranceInsertOverrides) {
 						try {
 							const patientIdForInsert = firstValidNumber([
 								patientSource && patientSource.patientId,
@@ -604,11 +658,13 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 								dos: opts.dos,
 								logFn,
 								insuranceInsertResponse: insertInsuranceResponse,
+								insuranceInsertResponses: insertInsuranceResponses,
 								insurancePlanResponse: opts.insuranceCreateResult ? opts.insuranceCreateResult.plan : undefined,
+								insurancePlanResponses: Array.isArray(opts.insuranceCreateResults) ? opts.insuranceCreateResults.map(r => r && r.plan).filter(Boolean) : (opts.insuranceCreateResult ? [opts.insuranceCreateResult.plan] : undefined),
 								facilityIdOverride: opts.facilityId,
 								insuranceType: opts.insuranceType,
 							});
-										outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: cs, insertInsuranceResponse, insertInsuranceError } as any;
+									outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: cs, insertInsuranceResponse, insertInsuranceResponses, insertInsuranceError } as any;
 									// release record lock for this patient
 									try {
 										const rel = await releaseRecordLock((patientSource && patientSource.patientId) ? (patientSource.patientId as number) : thisPid, token, apiBaseUrl);
@@ -644,7 +700,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 							try {
 								const errAny = csErr as any;
 								const msg = errAny && errAny.message ? errAny.message : String(errAny);
-								outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: { error: msg }, insertInsuranceResponse, insertInsuranceError } as any;
+								outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: { error: msg }, insertInsuranceResponse, insertInsuranceResponses, insertInsuranceError } as any;
 							} catch (e) {}
 						}
 					} catch (createErr) {

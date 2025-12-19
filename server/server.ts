@@ -87,19 +87,33 @@ app.post('/seed', (req, res) => {
 				// determine if physician override provided
 				const hasPhysId = typeof opts.physicianId === 'number' && !Number.isNaN(opts.physicianId);
 				let insuranceResult: any = null;
+				let insuranceResults: any[] | null = null;
 				let insuranceOverrides: InsuranceInsertOverrides | undefined;
+				let insuranceOverridesList: InsuranceInsertOverrides[] | undefined;
 				const shouldCreateInsurance = (opts.mode !== 'auto') && String(opts.insuranceType || '').toLowerCase() === 'create';
 				if (shouldCreateInsurance) {
 					if (!opts.suffix || !String(opts.suffix).trim()) throw new Error('Suffix is required to create insurance');
-					insuranceResult = await createInsurance({
-						apiBaseUrl: opts.apiUrl || opts.url,
-						token,
-						suffix: opts.suffix,
-						timeoutMs: 60000,
-						extraHeaders,
-						logFn: logger,
-					});
-					insuranceOverrides = extractInsuranceInsertOverrides(insuranceResult);
+					const pr: string = String(opts.insurancePriority || 'primary').toLowerCase();
+					const count = pr === 'p+s+t' ? 3 : (pr === 'p+s' ? 2 : 1);
+					insuranceResults = [];
+					for (let i = 1; i <= count; i += 1) {
+						const suffix = `${String(opts.suffix).trim()}v${i}`;
+						const one = await createInsurance({
+							apiBaseUrl: opts.apiUrl || opts.url,
+							token,
+							suffix,
+							timeoutMs: 60000,
+							extraHeaders,
+							logFn: logger,
+						});
+						insuranceResults.push(one);
+					}
+					// For backward-compat also expose the first result
+					insuranceResult = insuranceResults[0];
+					// Build overrides list for patient-insert mapping
+					insuranceOverridesList = insuranceResults.map(r => extractInsuranceInsertOverrides(r)).filter(Boolean) as InsuranceInsertOverrides[];
+					// Keep single override for legacy path
+					insuranceOverrides = insuranceOverridesList[0];
 				}
 				const svcRes = await createBasicPatients({
 					apiBaseUrl: opts.apiUrl || opts.url,
@@ -127,11 +141,13 @@ app.post('/seed', (req, res) => {
 					selectedPeriodId: typeof opts.periodId !== 'undefined' ? Number(opts.periodId) : undefined,
 					selectedBatchId: typeof opts.batchId !== 'undefined' ? Number(opts.batchId) : undefined,
 					insuranceInsertOverrides: insuranceOverrides,
-						insuranceType: opts.insuranceType,
-						insuranceCreateResult: insuranceResult || undefined,
+					insuranceInsertOverridesList: insuranceOverridesList,
+					insuranceType: opts.insuranceType,
+					insuranceCreateResult: insuranceResult || undefined,
+					insuranceCreateResults: insuranceResults || undefined,
 				});
 				const runElapsedMs = Date.now() - runStart;
-				return res.json({ ok: true, result: svcRes, insuranceResult, tokenPresent: !!token, logs, runElapsedMs });
+				return res.json({ ok: true, result: svcRes, insuranceResult, insuranceResults, tokenPresent: !!token, logs, runElapsedMs });
 			}
 
 			// fallback demo behavior
