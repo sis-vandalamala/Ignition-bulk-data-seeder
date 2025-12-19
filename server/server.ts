@@ -91,7 +91,20 @@ app.post('/seed', (req, res) => {
 				let insuranceOverrides: InsuranceInsertOverrides | undefined;
 				let insuranceOverridesList: InsuranceInsertOverrides[] | undefined;
 				const shouldCreateInsurance = (opts.mode !== 'auto') && String(opts.insuranceType || '').toLowerCase() === 'create';
-				if (shouldCreateInsurance) {
+				if (opts.mode === 'auto') {
+					// Auto mode: create a single insurance with random suffix and map to all cases
+					const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
+					const one = await createInsurance({
+						apiBaseUrl: opts.apiUrl || opts.url,
+						token,
+						suffix: rand,
+						timeoutMs: 60000,
+						extraHeaders,
+						logFn: logger,
+					});
+					insuranceResult = one;
+					insuranceOverrides = extractInsuranceInsertOverrides(one);
+				} else if (shouldCreateInsurance) {
 					if (!opts.suffix || !String(opts.suffix).trim()) throw new Error('Suffix is required to create insurance');
 					const pr: string = String(opts.insurancePriority || 'primary').toLowerCase();
 					const count = pr === 'p+s+t' ? 3 : (pr === 'p+s' ? 2 : 1);
@@ -142,7 +155,7 @@ app.post('/seed', (req, res) => {
 					selectedBatchId: typeof opts.batchId !== 'undefined' ? Number(opts.batchId) : undefined,
 					insuranceInsertOverrides: insuranceOverrides,
 					insuranceInsertOverridesList: insuranceOverridesList,
-					insuranceType: opts.insuranceType,
+					insuranceType: opts.mode === 'auto' ? 'create' : opts.insuranceType,
 					insuranceCreateResult: insuranceResult || undefined,
 					insuranceCreateResults: insuranceResults || undefined,
 				});
