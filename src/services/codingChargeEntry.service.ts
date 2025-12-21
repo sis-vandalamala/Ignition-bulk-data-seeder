@@ -17,6 +17,10 @@ export type PerformCasesToCodeOptions = {
   cptAmounts?: Record<string, number>;
   feeScheduleOverride?: any[];
   periodBatchOverride?: ChargeEntryPeriodBatch;
+  // Bind primary insurance carrier into charge entry
+  primaryInsuranceCarrierId?: number;
+  // Primary patient insurance mapping for charge entry UI
+  primaryPatientInsurance?: { patientInsuranceId: number; displayName?: string };
 };
 
 type PerformPatientChargeEntryOptions = {
@@ -25,6 +29,10 @@ type PerformPatientChargeEntryOptions = {
   logFn?: (entry: ApiLogEntry) => void;
   periodBatch?: ChargeEntryPeriodBatch;
   caseSummaryId?: string | number;
+  // If provided, will override template `primaryInsuranceId`
+  primaryInsuranceCarrierId?: number;
+  // If provided, will populate lists and set `primaryInsuranceId`
+  primaryPatientInsurance?: { patientInsuranceId: number; displayName?: string };
 };
 
 function apiBase(base: string) {
@@ -184,6 +192,8 @@ export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryI
         logFn,
         periodBatch: options?.periodBatchOverride,
         caseSummaryId,
+        primaryInsuranceCarrierId: options?.primaryInsuranceCarrierId,
+        primaryPatientInsurance: options?.primaryPatientInsurance,
       });
       try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'ok', timestamp: new Date().toISOString(), durationMs: 0 } as any); } catch (e) {}
     } catch (e) {
@@ -260,6 +270,16 @@ export async function performChargeEntry(apiBaseUrl: string, chargeEntryRequestB
   const rel = `/CaseToCharge/SavePerformedProcedure/`;
   const url = base + rel;
   try {
+    // Debug: Log the final payload before making API call
+    try {
+      const payloadStr = (() => {
+        try { return typeof chargeEntryRequestBody === 'string' ? chargeEntryRequestBody : JSON.stringify(chargeEntryRequestBody, null, 2); } catch { return String(chargeEntryRequestBody); }
+      })();
+      // Console log requested
+      console.log('[performChargeEntry] Final payload:', payloadStr);
+      // Optional structured log callback
+      try { if (logFn) logFn({ url, method: 'POST', status: 'payload', timestamp: new Date().toISOString(), payload: chargeEntryRequestBody } as any); } catch (e) {}
+    } catch (e) {}
     // suppressed verbose debug logs
     // Use the shared postJson wrapper which returns response data or throws on error
     const res = await postJson(url, chargeEntryRequestBody, 20000, { 'Content-Type': 'application/json', token }, logFn);
@@ -373,7 +393,10 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     chargeEntryObject.cptCode = performedProcedure.cptCode;
     chargeEntryObject.physicianName = performedProcedure.physicianName;
     chargeEntryObject.performedCaseProcedureId = performedProcedure.performedCaseProcedureId ?? performedProcedure.performedCaseProcedureId;
-    chargeDetails.peformedCaseProcedureId = performedProcedure.performedCaseProcedureId ?? performedProcedure.performedCaseProcedureId;
+    // Correct field name expected by API
+    chargeDetails.performedCaseProcedureId = performedProcedure.performedCaseProcedureId ?? performedProcedure.performedCaseProcedureId;
+    // Remove typo field if present on template
+    try { if (Object.prototype.hasOwnProperty.call(chargeDetails, 'peformedCaseProcedureId')) delete (chargeDetails as any).peformedCaseProcedureId; } catch (e) {}
     const amtNum = resolveAmount(performedProcedure, casesToCodeResponse, amountFallback);
     chargeDetails.balance = amtNum;
     chargeDetails.transactionId = 0;
@@ -393,7 +416,7 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     transactionObject.transactionId = 0;
     transactionObject.periodId = periodId;
     transactionObject.batchId = batchId;
-    transactionObject.amount = String(amtNum);
+    transactionObject.amount = amtNum;
     transactionObject.batchDescription = batchDescription;
     transactionObject.chargeDetails = chargeDetails;
 
@@ -401,7 +424,8 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     chargeEntryObject.transactionList = [transactionObject];
 
     // chargeTransaction fields
-    chargeTransactionChargeDetails.peformedCaseProcedureId = performedProcedure.performedCaseProcedureId;
+    chargeTransactionChargeDetails.performedCaseProcedureId = performedProcedure.performedCaseProcedureId;
+    try { if (Object.prototype.hasOwnProperty.call(chargeTransactionChargeDetails, 'peformedCaseProcedureId')) delete (chargeTransactionChargeDetails as any).peformedCaseProcedureId; } catch (e) {}
     chargeTransactionChargeDetails.balance = amtNum;
     chargeTransactionChargeDetails.transactionId = 0;
     chargeTransactionObject.periodId = periodId;
@@ -413,11 +437,32 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     chargeTransactionObject.chargeDetails = chargeTransactionChargeDetails;
     chargeEntryObject.chargeTransaction = chargeTransactionObject;
 
-    // remove insurance mapping per user note
-    chargeEntryObject.chargeEntryPatientInsMap = [];
-    chargeEntryObject.primaryInsurancesList = [];
+    // Insurance mapping: populate lists from provided patient insurance
     chargeEntryObject.secondaryInsurancesList = [];
     chargeEntryObject.tertiaryInsurancesList = [];
+    if (options && options.primaryPatientInsurance && typeof options.primaryPatientInsurance.patientInsuranceId === 'number') {
+      const pid = options.primaryPatientInsurance.patientInsuranceId;
+      const pname = options.primaryPatientInsurance.displayName;
+      chargeEntryObject.primaryInsuranceId = pid;
+      chargeEntryObject.primaryInsurancesList = [{ patientInsuranceId: pid, displayName: pname }];
+      chargeEntryObject.chargeEntryPatientInsMap = [{
+        chargeEntryDetailsId: 0,
+        patientInsuranceId: pid,
+        insuranceUsedInTransfer: false,
+        sortOrder: 0,
+        canBillGenerated: false,
+        sourceIdentifier: '00000000-0000-0000-0000-000000000000',
+      }];
+    } else {
+      chargeEntryObject.primaryInsurancesList = [];
+      chargeEntryObject.chargeEntryPatientInsMap = [];
+    }
+
+    // Align flags closer to working payload
+    chargeEntryObject.controlsModifiedInEditChargeMode = false;
+    chargeEntryObject.isAmountChanged = true;
+    chargeEntryObject.generateBill = false;
+    chargeEntryObject.eventSource = 'ReadyForBillBtn';
 
     chargeEntries.push(chargeEntryObject);
   }

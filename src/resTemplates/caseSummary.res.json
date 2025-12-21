@@ -54,7 +54,7 @@
             "signatureDt": null,
             "signatureUsername": null,
             "caseSummaryId": 0,
-            "selfPayTf": true,
+            "selfPayTf": false,
             "laterality": 1,
             "lateralityText": "Left",
             "workersCompensation": false,

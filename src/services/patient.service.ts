@@ -4,7 +4,7 @@ import path from 'path';
 import axios from 'axios';
 import { postJson, getJson, ApiLogEntry } from '../utils/api';
 import createCaseSummary from './caseSummary.service';
-import { requestRecordLock, releaseRecordLock, getPeriodBatches, createPeriod, createBatch } from './support.service';
+import { requestRecordLock, releaseRecordLock, getPeriodBatches, createPeriod, createBatch, getRoomsForOrganization } from './support.service';
 import { runDischargeFlow } from './discharge.service';
 import codingChargeEntry, { type ChargeEntryPeriodBatch } from './codingChargeEntry.service';
 import { insertInsuranceGemini, createInsertInsurancePayload, type InsuranceInsertOverrides, type CreateInsuranceResult } from './insurance.service';
@@ -60,6 +60,63 @@ function baseDateFromDos(dos?: string) {
 	if (!dos) return new Date();
 	const parsed = new Date(dos);
 	return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+function startOfDayUtc(date: Date) {
+	return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
+}
+
+function formatHHmm(d: Date) {
+	const hh = String(d.getUTCHours()).padStart(2, '0');
+	const mm = String(d.getUTCMinutes()).padStart(2, '0');
+	return `${hh}:${mm}`;
+}
+
+function extractRoomId(room: any): number | undefined {
+	const candidates = [room?.roomId, room?.RoomId, room?.roomID, room?.id, room?.value];
+	for (const c of candidates) {
+		const n = Number(c);
+		if (!Number.isNaN(n) && n > 0) return n;
+	}
+	return undefined;
+}
+
+function extractRoomName(room: any): string | undefined {
+	const candidates = [room?.name, room?.roomName, room?.RoomName, room?.displayName, room?.label];
+	for (const c of candidates) {
+		if (typeof c === 'string' && c.trim()) return c.trim();
+	}
+	return undefined;
+}
+
+function pickRandomRoom(rooms: any[]): { roomId?: number; roomName?: string } {
+	if (!Array.isArray(rooms) || rooms.length === 0) return {};
+	const idx = Math.floor(Math.random() * rooms.length);
+	const chosen = rooms[idx];
+	return { roomId: extractRoomId(chosen), roomName: extractRoomName(chosen) };
+}
+
+function generateRandom15MinSlot(dos?: string) {
+	const base = startOfDayUtc(baseDateFromDos(dos));
+	// Auto window: choose start in [02:30 .. 20:45] so end is ≤ 21:00
+	// Slot indices: 00:00 = 0; 02:30 = 150/15 = 10; 20:45 = 1245/15 = 83
+	const minStartSlot = 10; // 02:30
+	const maxStartSlot = 70; // 20:45 (end 21:00)
+	const startSlot = minStartSlot + Math.floor(Math.random() * (maxStartSlot - minStartSlot + 1));
+	const startMinutes = startSlot * 15;
+	const endMinutes = startMinutes + 15;
+	const start = new Date(base.getTime() + startMinutes * 60000);
+	const end = new Date(base.getTime() + endMinutes * 60000);
+	const mmddyyyy = `${String(base.getUTCMonth() + 1).padStart(2, '0')}/${String(base.getUTCDate()).padStart(2, '0')}/${String(base.getUTCFullYear())}`;
+	return {
+		duration: 15,
+		startIso: start.toISOString(),
+		endIso: end.toISOString(),
+		startHHmm: formatHHmm(start),
+		endHHmm: formatHHmm(end),
+		dosText: mmddyyyy,
+		baseStartIso: start.toISOString(),
+	};
 }
 
 function firstValidNumber(values: Array<any>) {
@@ -466,6 +523,19 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 	if (!token) return { ok: false, error: 'token is required' };
 	const suffixValue = typeof suffix === 'string' ? suffix : '';
 	const isAutoMode = mode === 'auto';
+	// In AUTO MODE, DOS should always be today (YYYY-MM-DD)
+	if (isAutoMode) {
+		try {
+			const now = new Date();
+			const yyyy = now.getUTCFullYear();
+			const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+			const dd = String(now.getUTCDate()).padStart(2, '0');
+			const todayYmd = `${yyyy}-${mm}-${dd}`;
+			opts.dos = todayYmd;
+		} catch (e) {
+			// fallback: leave opts.dos as-is
+		}
+	}
 	if (!suffixValue && !isAutoMode) return { ok: false, error: 'suffix is required' };
 	const flowDepthValue = typeof opts.flowDepth === 'number' ? opts.flowDepth : 3;
 	let periodBatchOverride: PeriodBatchContext | undefined;
@@ -484,6 +554,16 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 	const insertInsuranceTimeout = typeof opts.insertInsuranceTimeoutMs === 'number' ? opts.insertInsuranceTimeoutMs : 15000;
 
 	const tpl = loadTemplate();
+	// Preload rooms for AUTO MODE
+	let roomsList: any[] = [];
+	if (isAutoMode) {
+		try {
+			const rr: any = await getRoomsForOrganization(token, apiBaseUrl);
+			roomsList = Array.isArray(rr) ? rr : (Array.isArray(rr?.rooms) ? rr.rooms : []);
+		} catch (e) {
+			roomsList = [];
+		}
+	}
 	const pickAutoName = isAutoMode ? createAutoNameFactory() : null;
 	const outcomes: Array<CreateBasicPatientResult | undefined> = new Array(total);
 	let lastPatientId: number | null = null;
@@ -644,12 +724,15 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 							insertInsuranceError = insertErr && (insertErr as any).message ? (insertErr as any).message : String(insertErr);
 						}
 					}
+							// Auto overrides: room + randomized 15-min slot across the day
+							const autoTime = isAutoMode ? generateRandom15MinSlot(opts.dos) : null;
+							const autoRoom = isAutoMode ? pickRandomRoom(roomsList) : {};
 							const cs = await createCaseSummary({
 								apiBaseUrl,
 								token,
 								patientResponse: patientSource,
-								roomIdOverride: (patientSource && (patientSource.roomId || patientSource.roomId === 0)) ? (patientSource.roomId as number) : (opts.roomIdOverride === undefined ? undefined : opts.roomIdOverride),
-								roomNameOverride: (patientSource && patientSource.roomName) ? (patientSource.roomName as string) : (opts.roomNameOverride === undefined ? undefined : opts.roomNameOverride),
+								roomIdOverride: (patientSource && (patientSource.roomId || patientSource.roomId === 0)) ? (patientSource.roomId as number) : (isAutoMode && autoRoom.roomId !== undefined ? autoRoom.roomId : (opts.roomIdOverride === undefined ? undefined : opts.roomIdOverride)),
+								roomNameOverride: (patientSource && (patientSource as any).roomName) ? (patientSource as any).roomName as string : (isAutoMode && autoRoom.roomName ? autoRoom.roomName : (opts.roomNameOverride === undefined ? undefined : opts.roomNameOverride)),
 								appointmentTypeIdOverride: (patientSource && (patientSource.appointmentTypeId || patientSource.appointmentTypeId === 0)) ? (patientSource.appointmentTypeId as number) : (opts.appointmentTypeIdOverride === undefined ? undefined : opts.appointmentTypeIdOverride),
 								appointmentTypeNameOverride: (patientSource && patientSource.appointmentTypeName) ? (patientSource.appointmentTypeName as string) : (opts.appointmentTypeNameOverride === undefined ? undefined : opts.appointmentTypeNameOverride),
 								physicianIdOverride: (patientSource && (patientSource.primaryPhysicianId || patientSource.primaryPhysicianId === 0)) ? (patientSource.primaryPhysicianId as number) : (opts.physicianIdOverride === undefined ? undefined : (opts as any).physicianIdOverride),
@@ -663,6 +746,19 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 								insurancePlanResponses: Array.isArray(opts.insuranceCreateResults) ? opts.insuranceCreateResults.map(r => r && r.plan).filter(Boolean) : (opts.insuranceCreateResult ? [opts.insuranceCreateResult.plan] : undefined),
 								facilityIdOverride: opts.facilityId,
 								insuranceType: opts.insuranceType,
+								caseSummary: (isAutoMode && autoTime) ? {
+									duration: 15,
+									procedureStartDt: autoTime.startIso,
+									procedureStopDt: autoTime.endIso,
+									procedureStartTime: autoTime.startIso,
+									procedureStopTime: autoTime.endIso,
+									startTime: autoTime.startHHmm,
+									endTime: autoTime.endHHmm,
+									dateOfService: autoTime.dosText,
+									procedureDt: autoTime.baseStartIso,
+									roomId: (autoRoom.roomId !== undefined) ? autoRoom.roomId : undefined,
+									roomName: (autoRoom.roomName) ? autoRoom.roomName : undefined,
+								} : undefined,
 							});
 									outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: cs, insertInsuranceResponse, insertInsuranceResponses, insertInsuranceError } as any;
 									// release record lock for this patient
@@ -690,6 +786,37 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 												cptAmounts: (opts as any).cptAmounts,
 												feeScheduleOverride: (opts as any).feeScheduleOverride,
 												periodBatchOverride,
+												// Bind primary insurance carrier for charge entry
+												primaryInsuranceCarrierId: (function() {
+													try {
+														if (Array.isArray(opts.insuranceCreateResults) && opts.insuranceCreateResults.length) {
+															const plan = opts.insuranceCreateResults[0] && opts.insuranceCreateResults[0].plan;
+															const id = plan && (plan.insuranceCarrierId ?? plan.insuranceCarrierObjectId);
+															return typeof id === 'number' ? id : undefined;
+														}
+														if (opts.insuranceCreateResult && opts.insuranceCreateResult.plan) {
+															const plan = opts.insuranceCreateResult.plan;
+															const id = plan && (plan.insuranceCarrierId ?? plan.insuranceCarrierObjectId);
+															return typeof id === 'number' ? id : undefined;
+														}
+													} catch (e) {}
+													return undefined;
+												})(),
+												// Provide primary patient insurance (first inserted)
+												primaryPatientInsurance: (function() {
+													try {
+														const list = insertInsuranceResponses || (opts as any).insertInsuranceResponses;
+														if (Array.isArray(list) && list.length) {
+															const first = list[0];
+															const pid = first && (first.patientInsuranceId ?? first.PatientInsuranceId);
+															if (typeof pid === 'number') {
+																const dn = first && (first.displayName ?? ((first.carrier && first.planName) ? `${first.carrier}, ${first.planName}` : undefined));
+																return { patientInsuranceId: pid, displayName: dn };
+															}
+														}
+													} catch (e) {}
+													return undefined;
+												})(),
 											});
 										}
 									} catch (dfErr) {

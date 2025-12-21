@@ -211,7 +211,7 @@
             "feeScheduleId": 9550,
             "procedureDisplayName": "00140; ANESTHESIA EYE NOT OTHERWISE SPECIFIED",
             "isEditable": false,
-            "selfPayTf": true,
+            "selfPayTf": false,
             "workersCompensation": false,
             "AnesTypeName": "",
             "casePackName": "",
