@@ -72,7 +72,9 @@ app.post('/seed', (req, res) => {
 	(async () => {
 		try {
 			const opts = req.body && req.body.opts ? req.body.opts : {};
-			if (opts && opts.action === 'createBasicPatients') {
+			const actionStr = String((opts && (opts as any).action) ? (opts as any).action : 'createBasicPatients');
+			const isAutoSeedAction = ['createBasicPatients','dischargeCases','casesToCode','chargeEntry'].includes(actionStr);
+			if (isAutoSeedAction) {
 				const runStart = Date.now();
 				// collect relevant headers from the incoming request to mimic UI behavior
 				const incoming = req.headers || {};
@@ -127,8 +129,17 @@ app.post('/seed', (req, res) => {
 					insuranceOverridesList = insuranceResults.map(r => extractInsuranceInsertOverrides(r)).filter(Boolean) as InsuranceInsertOverrides[];
 					// Keep single override for legacy path
 					insuranceOverrides = insuranceOverridesList[0];
-				}
-				const svcRes = await createBasicPatients({
+								}
+								// Infer flow depth from action when not explicitly provided
+								const actionLower = String((opts && (opts as any).action) || '').toLowerCase();
+								let inferredFlowDepth: number | undefined = undefined;
+								if (actionLower) {
+									if (actionLower === 'createbasicpatients' || actionLower === 'createcase') inferredFlowDepth = 0;
+									else if (actionLower === 'dischargecases' || actionLower === 'discharge') inferredFlowDepth = 1;
+									else if (actionLower === 'casestocode') inferredFlowDepth = 2;
+									else if (actionLower === 'chargeentry') inferredFlowDepth = 3;
+								}
+								const svcRes = await createBasicPatients({
 					apiBaseUrl: opts.apiUrl || opts.url,
 					token,
 					suffix: opts.suffix,
@@ -148,7 +159,7 @@ app.post('/seed', (req, res) => {
 					logFn: logger,
 					extraHeaders,
 					username: opts.username,
-					flowDepth: typeof opts.flowDepth === 'number' ? opts.flowDepth : undefined,
+					flowDepth: typeof opts.flowDepth === 'number' ? opts.flowDepth : inferredFlowDepth,
 					mode: opts.mode,
 					periodBatchMode: opts.mode === 'auto' ? 'auto' : (opts.periodBatch as 'select' | 'create' | undefined),
 					selectedPeriodId: typeof opts.periodId !== 'undefined' ? Number(opts.periodId) : undefined,

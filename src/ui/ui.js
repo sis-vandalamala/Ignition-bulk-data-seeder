@@ -49,9 +49,7 @@
   const flowDepth = $('flowDepth');
   const flowDepthLabel = $('flowDepthLabel');
   const flowSteps = $('flowSteps');
-  const autoFlowDepth = $('autoFlowDepth');
-  const autoFlowDepthLabel = $('autoFlowDepthLabel');
-  const autoFlowSteps = $('autoFlowSteps');
+  const autoActionSelect = $('autoActionSelect');
   const autoRunCard = $('autoRunCard');
   const logEl = document.getElementById('logCard');
   const logTableBody = document.getElementById('logTableBody');
@@ -152,7 +150,7 @@
     update();
   }
   initFlowDepthControls(flowDepth, flowDepthLabel, flowSteps);
-  initFlowDepthControls(autoFlowDepth, autoFlowDepthLabel, autoFlowSteps);
+  // Auto mode uses an action select instead of a flow depth slider
 
   function createProgressController(parts = {}){
     const { wrap, fill, label } = parts;
@@ -1224,15 +1222,14 @@
     autoRunBtn.addEventListener('click', async () => {
       const payload = {
         opts: {
-          action: 'createBasicPatients',
+          action: autoActionSelect ? autoActionSelect.value : 'createBasicPatients',
           mode: 'auto',
           count: Number(autoCount && autoCount.value ? autoCount.value : 1) || 1,
           concurrency: Number(autoConcurrency && autoConcurrency.value ? autoConcurrency.value : 0) || undefined,
           apiUrl: autoApiUrl ? autoApiUrl.value : '',
           facilityId: autoFacilityId && autoFacilityId.value ? Number(autoFacilityId.value) : undefined,
           username: autoUsername ? autoUsername.value : '',
-          password: autoPassword ? autoPassword.value : '',
-          flowDepth: autoFlowDepth ? Number(autoFlowDepth.value) : undefined
+          password: autoPassword ? autoPassword.value : ''
         }
       };
       await executeSeedRun({

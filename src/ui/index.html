@@ -339,15 +339,13 @@
             </div>
             <div style="flex:1;min-width:320px">
               <div class="field">
-                <label>Workflow</label>
-                <input id="autoFlowDepth" type="range" min="0" max="3" step="1" value="3" style="width:100%;margin-top:4px" data-depth="3" />
-                <div class="flow-steps" id="autoFlowSteps">
-                  <div class="flow-step" data-step="0"><button type="button" class="dot"></button><span class="label">Create Case</span></div>
-                  <div class="flow-step" data-step="1"><button type="button" class="dot"></button><span class="label">Discharge</span></div>
-                  <div class="flow-step" data-step="2"><button type="button" class="dot"></button><span class="label">Cases to Code</span></div>
-                  <div class="flow-step" data-step="3"><button type="button" class="dot"></button><span class="label">Charge Entry</span></div>
-                </div>
-                <div id="autoFlowDepthLabel" class="flow-label" data-depth="3" style="margin-top:12px">Full: Charge Entry</div>
+                <label>Workflow Action</label>
+                <select id="autoActionSelect" style="width:100%;margin-top:6px;padding:10px 12px;border-radius:8px;background:var(--input);border:1px solid rgba(15,23,42,0.06)">
+                  <option value="createBasicPatients">Create Case</option>
+                  <option value="dischargeCases">Discharge</option>
+                  <option value="casesToCode">Cases to Code</option>
+                  <option value="chargeEntry">Charge Entry</option>
+                </select>
               </div>
             </div>
           </div>
