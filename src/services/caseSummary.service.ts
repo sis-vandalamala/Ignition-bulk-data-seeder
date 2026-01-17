@@ -6,6 +6,8 @@ import { postJson, ApiLogEntry } from '../utils/api';
 import type { ICaseSummary, IPatient } from '../models/caseSummary.interface';
 
 const CASE_SUMMARY_ENDPOINT = '/api/CaseSummaryComplex/Gemini/UpsertCaseSummary';
+const UPSERT_MAX_ATTEMPTS = 4;
+const UPSERT_BASE_DELAY_MS = 350;
 const templatePath = path.join(__dirname, '..', 'reqTemplates', 'caseSummary.req.json');
 const caseGuarantorTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'caseGuarantor.json');
 const caseInsurancesTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'caseInsurances.json');
@@ -13,6 +15,8 @@ const caseInsurancesTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'c
 let cachedTemplate: ICaseSummary | null = null;
 let cachedCaseGuarantorTemplate: any | null = null;
 let cachedCaseInsurancesTemplate: any | null = null;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function loadCaseSummaryTemplate(): ICaseSummary {
 	if (cachedTemplate) return cachedTemplate;
@@ -560,9 +564,21 @@ export async function createCaseSummary({
 		});
 	}
 	const url = `${base}${CASE_SUMMARY_ENDPOINT}`;
-	// Post the case summary (debug logs suppressed)
-	const res = await postJson(url, payload, timeoutMs, buildHeaders(token), logFn);
-	return res;
+	const attemptRequest = async () => postJson(url, payload, timeoutMs, buildHeaders(token), logFn);
+	let lastErr: any = null;
+	for (let attempt = 1; attempt <= UPSERT_MAX_ATTEMPTS; attempt += 1) {
+		try {
+			return await attemptRequest();
+		} catch (err: any) {
+			lastErr = err;
+			const status = err && err.response ? err.response.status : (typeof err?.status === 'number' ? err.status : undefined);
+			const retryable = !err || !err.response || status === 429 || (typeof status === 'number' && status >= 500);
+			if (!retryable || attempt === UPSERT_MAX_ATTEMPTS) throw err;
+			const delay = UPSERT_BASE_DELAY_MS * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 200);
+			await sleep(delay);
+		}
+	}
+	throw lastErr;
 }
 
 export default createCaseSummary;

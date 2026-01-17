@@ -59,6 +59,23 @@
   const logClearBtn = document.getElementById('logClearBtn');
   const logAutoScroll = document.getElementById('logAutoScroll');
   const logBuffer = [];
+  const LOG_BUFFER_LIMIT = 400;
+  function isErrorStatus(status){
+    if (status === null || typeof status === 'undefined') return false;
+    const str = String(status).toLowerCase();
+    if (str === 'error' || str === 'fail') return true;
+    if (/^\d+$/.test(str)) return Number(str) >= 400;
+    if (str.startsWith('4') || str.startsWith('5')) return true;
+    return false;
+  }
+  function pushLogEntry(entry){
+    if (!entry) return false;
+    const hasError = entry.error && String(entry.error).trim() !== '';
+    if (!hasError && !isErrorStatus(entry.status)) return false;
+    logBuffer.unshift(entry);
+    if (logBuffer.length > LOG_BUFFER_LIMIT) logBuffer.length = LOG_BUFFER_LIMIT;
+    return true;
+  }
   const elapsedEl = document.getElementById('elapsedDisplay');
   const runProgressFill = document.getElementById('runProgressFill');
   const runProgressLabel = document.getElementById('runProgressLabel');
@@ -294,7 +311,7 @@
                 const status = l.status || (l.error ? 'error' : 'unknown');
                 const dur = Number(l.durationMs || 0);
                 const dsec = (dur/1000).toFixed(2) + 's';
-                logBuffer.unshift({ time: when, method: l.method || 'GET', url: l.url || '', status, duration: dsec });
+                pushLogEntry({ time: when, method: l.method || 'GET', url: l.url || '', status, duration: dsec, error: l.error });
               }
               renderTable();
             }
@@ -408,7 +425,7 @@
             const status = l.status || (l.error ? 'error' : 'unknown');
             const dur = Number(l.durationMs || 0);
             const dsec = (dur/1000).toFixed(2)+'s';
-            logBuffer.unshift({ time: when, method: l.method, url: l.url, status, duration: dsec });
+            pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
           } catch (e) { /* ignore per-log parse error */ }
         });
         let failureCount = 0;
@@ -987,7 +1004,7 @@
                   const status = l.status || (l.error ? 'error' : 'unknown');
                   const dur = Number(l.durationMs || 0);
                   const dsec = (dur/1000).toFixed(2) + 's';
-                  logBuffer.unshift({ time: when, method: l.method || 'GET', url: l.url || '', status, duration: dsec });
+                  pushLogEntry({ time: when, method: l.method || 'GET', url: l.url || '', status, duration: dsec, error: l.error });
                 } catch (e) { /* ignore parse error */ }
               });
               renderTable();
@@ -1004,7 +1021,7 @@
               const status = l.status || (l.error ? 'error' : 'unknown');
               const dur = Number(l.durationMs || 0);
               const dsec = (dur/1000).toFixed(2)+'s';
-              logBuffer.unshift({ time: when, method: l.method, url: l.url, status, duration: dsec });
+              pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
             } catch (e) { log('login log parse error'); }
           });
           renderTable();
@@ -1039,7 +1056,7 @@
             const status = l.status || (l.error ? 'error' : 'unknown');
             const dur = Number(l.durationMs || 0);
             const dsec = (dur/1000).toFixed(2)+'s';
-            logBuffer.unshift({ time: when, method: l.method, url: l.url, status, duration: dsec });
+            pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
           } catch (e) { /* ignore per-log parse error */ }
         });
         renderTable();

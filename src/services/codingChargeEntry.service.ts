@@ -275,10 +275,8 @@ export async function performChargeEntry(apiBaseUrl: string, chargeEntryRequestB
       const payloadStr = (() => {
         try { return typeof chargeEntryRequestBody === 'string' ? chargeEntryRequestBody : JSON.stringify(chargeEntryRequestBody, null, 2); } catch { return String(chargeEntryRequestBody); }
       })();
-      // Console log requested
-      console.log('[performChargeEntry] Final payload:', payloadStr);
       // Optional structured log callback
-      try { if (logFn) logFn({ url, method: 'POST', status: 'payload', timestamp: new Date().toISOString(), payload: chargeEntryRequestBody } as any); } catch (e) {}
+      try { if (logFn) logFn({ url, method: 'POST', status: 'payload', timestamp: new Date().toISOString(), payload: payloadStr } as any); } catch (e) {}
     } catch (e) {}
     // suppressed verbose debug logs
     // Use the shared postJson wrapper which returns response data or throws on error

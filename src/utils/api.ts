@@ -47,11 +47,15 @@ function consoleFallback(entry: ApiLogEntry) {
 	try {
 		const enabled = (process && process.env && (process.env.ENABLE_CONSOLE_LOGS === '1' || process.env.NODE_ENV !== 'production'));
 		if (!enabled) return;
-		// keep output minimal: method url status duration
+		const statusVal = entry.status;
+		const statusStr = statusVal != null ? String(statusVal).toLowerCase() : '';
+		const statusNum = typeof statusVal === 'number' ? statusVal : (Number.isFinite(Number(statusVal)) ? Number(statusVal) : NaN);
+		const isErrorStatus = (!Number.isNaN(statusNum) && statusNum >= 400) || statusStr === 'error' || statusStr.startsWith('4') || statusStr.startsWith('5');
+		const shouldLog = Boolean(entry.error) || isErrorStatus;
+		if (!shouldLog) return;
 		const dur = entry.durationMs != null ? `${entry.durationMs}ms` : '-';
-		const status = entry.status != null ? String(entry.status) : 'unknown';
-		// Use console.info to allow output without being too verbose
-		try { console.info(`[api] ${entry.method} ${entry.url} ${status} ${dur}`); } catch (e) {}
+		const status = entry.status != null ? String(entry.status) : 'error';
+		try { console.error(`[api] ${entry.method} ${entry.url} ${status} ${dur}${entry.error ? ` :: ${entry.error}` : ''}`); } catch (e) {}
 	} catch (e) { /* ignore fallback errors */ }
 }
 

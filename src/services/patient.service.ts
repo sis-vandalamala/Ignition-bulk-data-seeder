@@ -26,6 +26,9 @@ const AUTO_LAST_NAMES = [
 ];
 
 const ZERO_GUID = '00000000-0000-0000-0000-000000000000';
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const CASE_BATCH_SIZE = 120;
+const BATCH_DELAY_MS = 5000;
 
 type PeriodBatchMode = 'select' | 'create' | 'auto';
 type PeriodBatchContext = ChargeEntryPeriodBatch;
@@ -843,18 +846,33 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 		}
 	};
 
-	let nextIndex = 1;
-	const workerCount = Math.min(maxConcurrency, total);
-	const workers = Array.from({ length: workerCount }, async () => {
-		while (true) {
-			const current = nextIndex;
-			nextIndex += 1;
-			if (current > total) break;
-			await makeRequest(current);
-		}
-	});
+				const processBatch = async (startIndex: number, endIndex: number) => {
+					let nextIndex = startIndex;
+					const workerCount = Math.min(maxConcurrency, endIndex - startIndex + 1);
+					const workers = Array.from({ length: workerCount }, async () => {
+						while (true) {
+							const current = nextIndex;
+							nextIndex += 1;
+							if (current > endIndex) break;
+							await makeRequest(current);
+						}
+					});
+					await Promise.all(workers);
+				};
 
-	await Promise.all(workers);
+				const totalBatches = Math.ceil(total / CASE_BATCH_SIZE);
+				for (let batchIndex = 0; batchIndex < totalBatches; batchIndex += 1) {
+					const startIndex = batchIndex * CASE_BATCH_SIZE + 1;
+					const endIndex = Math.min(total, startIndex + CASE_BATCH_SIZE - 1);
+					const batchStartMs = Date.now();
+					try { if (logFn) logFn({ url: 'createBasicPatients', method: 'BATCH', status: `start-${batchIndex + 1}`, timestamp: new Date().toISOString() } as any); } catch (e) {}
+					await processBatch(startIndex, endIndex);
+					const batchDuration = Date.now() - batchStartMs;
+					try { if (logFn) logFn({ url: 'createBasicPatients', method: 'BATCH', status: `ok-${batchIndex + 1}`, durationMs: batchDuration, timestamp: new Date().toISOString() } as any); } catch (e) {}
+					if (batchIndex < totalBatches - 1) {
+						await sleep(BATCH_DELAY_MS);
+					}
+				}
 
 	const results = outcomes.filter(Boolean) as CreateBasicPatientResult[];
 	const hasError = results.some((o) => !!o.error);

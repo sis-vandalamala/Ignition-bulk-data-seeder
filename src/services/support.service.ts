@@ -125,7 +125,6 @@ export async function getPeriodBatches(token: string, apiBaseUrl?: string, extra
 
     try {
         const res = await getJson(url, 15000, defaultHeaders as any);
-        try { const first = Array.isArray(res) ? res[0] : res; console.log('[getPeriodBatches] response sample:', first); } catch (e) {}
         return res;
     } catch (err) {
         const axiosRes = await axios.get(url, { headers: defaultHeaders, timeout: 15000, responseType: 'json' });
