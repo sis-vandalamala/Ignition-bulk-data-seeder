@@ -398,6 +398,9 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     const amtNum = resolveAmount(performedProcedure, casesToCodeResponse, amountFallback);
     chargeDetails.balance = amtNum;
     chargeDetails.transactionId = 0;
+    // Ensure bill generation flags are set for charge entry
+    chargeDetails.generateBill = true;
+    chargeDetails.generateBillStateModified = true;
     chargeEntryObject.units = 1;
     chargeEntryObject.sortorder = i;
     const caseSummaryId = String(performedProcedure.caseSummaryId ?? '');
@@ -426,6 +429,8 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     try { if (Object.prototype.hasOwnProperty.call(chargeTransactionChargeDetails, 'peformedCaseProcedureId')) delete (chargeTransactionChargeDetails as any).peformedCaseProcedureId; } catch (e) {}
     chargeTransactionChargeDetails.balance = amtNum;
     chargeTransactionChargeDetails.transactionId = 0;
+    chargeTransactionChargeDetails.generateBill = true;
+    chargeTransactionChargeDetails.generateBillStateModified = true;
     chargeTransactionObject.periodId = periodId;
     chargeTransactionObject.batchId = batchId;
     chargeTransactionObject.batchDescription = batchDescription;
@@ -459,7 +464,8 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     // Align flags closer to working payload
     chargeEntryObject.controlsModifiedInEditChargeMode = false;
     chargeEntryObject.isAmountChanged = true;
-    chargeEntryObject.generateBill = false;
+    chargeEntryObject.generateBill = true;
+    chargeEntryObject.generateBillStateModified = true;
     chargeEntryObject.eventSource = 'ReadyForBillBtn';
 
     chargeEntries.push(chargeEntryObject);

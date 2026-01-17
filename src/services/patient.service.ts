@@ -805,7 +805,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 													} catch (e) {}
 													return undefined;
 												})(),
-												// Provide primary patient insurance (first inserted)
+												// Provide primary patient insurance: prefer first from list; fallback to single response in auto mode
 												primaryPatientInsurance: (function() {
 													try {
 														const list = insertInsuranceResponses || (opts as any).insertInsuranceResponses;
@@ -816,6 +816,14 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 																const dn = first && (first.displayName ?? ((first.carrier && first.planName) ? `${first.carrier}, ${first.planName}` : undefined));
 																return { patientInsuranceId: pid, displayName: dn };
 															}
+														}
+													} catch (e) {}
+													try {
+														const single = insertInsuranceResponse || (opts as any).insertInsuranceResponse;
+														const pid = single && (single.patientInsuranceId ?? single.PatientInsuranceId);
+														if (typeof pid === 'number') {
+															const dn = single && (single.displayName ?? ((single.carrier && single.planName) ? `${single.carrier}, ${single.planName}` : undefined));
+															return { patientInsuranceId: pid, displayName: dn };
 														}
 													} catch (e) {}
 													return undefined;
