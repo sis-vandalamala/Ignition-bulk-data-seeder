@@ -240,6 +240,19 @@ One-click seeding with intelligent defaults:
    - Period and batch auto-created with random suffix
    - Insurance auto-created with random suffix
 
+#### Auto Mode UI
+
+![Auto Mode UI](docs/auto-mode-ui.png)
+
+The Auto Mode interface consists of:
+
+- **Auto Mode Login** — Enter the Facility ID, Target API URL, Username, and Password, then click **Login** to authenticate against the target environment.
+- **Run Configuration** — After login, configure:
+  - **Number of Cases** — How many patient records to seed in this run (e.g. 5).
+  - **Concurrency** — Number of parallel API call workers (e.g. 4).
+  - **Workflow Action** — Select the target tracker from the dropdown (e.g. "Financial Clearance Tracker"). This determines how deep the pipeline runs (see [Action Mapping](#auto-mode-action-mapping) below).
+- **Run** — Click the **Run** button to start seeding. A progress bar shows real-time completion status, and the **Output Log** at the bottom displays total elapsed time and any error-status API calls for debugging.
+
 #### Auto Mode Action Mapping
 
 | UI Action | Server Action | Flow Depth |
@@ -508,3 +521,7 @@ A complete list of target Gemini/SIS API endpoints driven by Ignition:
 | `PORT` | `4000` | Express server port |
 | `NODE_ENV` | — | When not `production`, enables console error logging for failed API calls |
 | `ENABLE_CONSOLE_LOGS` | — | Set to `1` to force console error logging regardless of NODE_ENV |
+
+## Recorded KT session
+Link to the recorded session:
+ https://sismail.sharepoint.com/:v:/r/sites/CypressDevTeam/Shared%20Documents/General/Cypress%20Automation%20KT/KT%20sessions%20from%20Shambhu%20-%20March%202026/KT_session_2026-03-18_10-00-09.mp4?csf=1&web=1&e=n5Ua0P&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D
