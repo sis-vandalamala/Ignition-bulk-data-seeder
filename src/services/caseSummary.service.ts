@@ -340,7 +340,7 @@ export async function createCaseSummary({
 	physicianIdOverride,
 	physicianNameOverride,
 	feeScheduleOverride,
-	timeoutMs = 30000,
+	timeoutMs = 180000,
  	logFn,
  	autoStampToday = true,
  	procedureAdjustments,

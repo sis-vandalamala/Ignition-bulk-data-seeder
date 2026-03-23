@@ -4,7 +4,7 @@ import path from 'path';
 import axios from 'axios';
 import { postJson, getJson, ApiLogEntry } from '../utils/api';
 import createCaseSummary from './caseSummary.service';
-import { requestRecordLock, releaseRecordLock, getPeriodBatches, createPeriod, createBatch, getRoomsForOrganization } from './support.service';
+import { requestRecordLock, releaseRecordLock, getPeriodBatches, createPeriod, createBatch, getRoomsForOrganization, getAppointmentTypeNameAndID, getFeeSchedules } from './support.service';
 import { runDischargeFlow } from './discharge.service';
 import codingChargeEntry, { type ChargeEntryPeriodBatch } from './codingChargeEntry.service';
 import { insertInsuranceGemini, createInsertInsurancePayload, type InsuranceInsertOverrides, type CreateInsuranceResult } from './insurance.service';
@@ -97,6 +97,36 @@ function pickRandomRoom(rooms: any[]): { roomId?: number; roomName?: string } {
 	const idx = Math.floor(Math.random() * rooms.length);
 	const chosen = rooms[idx];
 	return { roomId: extractRoomId(chosen), roomName: extractRoomName(chosen) };
+}
+
+function extractApptTypeId(a: any): number | undefined {
+	const candidates = [a?.appointmentTypeId, a?.AppointmentTypeId, a?.appointmentTypeID, a?.id, a?.value];
+	for (const c of candidates) {
+		const n = Number(c);
+		if (!Number.isNaN(n) && n > 0) return n;
+	}
+	return undefined;
+}
+
+function extractApptTypeName(a: any): string | undefined {
+	const candidates = [a?.appointment_Type_Desc, a?.appTypeDesc, a?.description, a?.name, a?.label];
+	for (const c of candidates) {
+		if (typeof c === 'string' && c.trim()) return c.trim();
+	}
+	return undefined;
+}
+
+function pickRandomApptType(apptTypes: any[]): { appointmentTypeId?: number; appointmentTypeName?: string } {
+	if (!Array.isArray(apptTypes) || apptTypes.length === 0) return {};
+	const idx = Math.floor(Math.random() * apptTypes.length);
+	const chosen = apptTypes[idx];
+	return { appointmentTypeId: extractApptTypeId(chosen), appointmentTypeName: extractApptTypeName(chosen) };
+}
+
+function pickRandomFeeSchedule(feeSchedules: any[]): any | undefined {
+	if (!Array.isArray(feeSchedules) || feeSchedules.length === 0) return undefined;
+	const idx = Math.floor(Math.random() * feeSchedules.length);
+	return feeSchedules[idx];
 }
 
 function generateRandom15MinSlot(dos?: string) {
@@ -502,7 +532,7 @@ export async function createPatient(apiBaseUrl: string, token: string, patientPa
 		// suppressed debug payload log
 		const res = await axios.post(url, payload, {
 			headers,
-			timeout: 30000,
+			timeout: 180000,
 			responseType: 'text',
 			transformResponse: [(data) => data],
 		});
@@ -557,14 +587,28 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 	const insertInsuranceTimeout = typeof opts.insertInsuranceTimeoutMs === 'number' ? opts.insertInsuranceTimeoutMs : 15000;
 
 	const tpl = loadTemplate();
-	// Preload rooms for AUTO MODE
+	// Preload rooms, appointment types, and fee schedules for AUTO MODE
 	let roomsList: any[] = [];
+	let apptTypesList: any[] = [];
+	let feeSchedulesList: any[] = [];
 	if (isAutoMode) {
 		try {
 			const rr: any = await getRoomsForOrganization(token, apiBaseUrl);
 			roomsList = Array.isArray(rr) ? rr : (Array.isArray(rr?.rooms) ? rr.rooms : []);
 		} catch (e) {
 			roomsList = [];
+		}
+		try {
+			const at: any = await getAppointmentTypeNameAndID(token, apiBaseUrl);
+			apptTypesList = Array.isArray(at) ? at : [];
+		} catch (e) {
+			apptTypesList = [];
+		}
+		try {
+			const fs: any = await getFeeSchedules(token, apiBaseUrl, opts.extraHeaders);
+			feeSchedulesList = Array.isArray(fs) ? fs : [];
+		} catch (e) {
+			feeSchedulesList = [];
 		}
 	}
 	const pickAutoName = isAutoMode ? createAutoNameFactory() : null;
@@ -727,20 +771,22 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 							insertInsuranceError = insertErr && (insertErr as any).message ? (insertErr as any).message : String(insertErr);
 						}
 					}
-							// Auto overrides: room + randomized 15-min slot across the day
+							// Auto overrides: room, appointment type, fee schedule + randomized 15-min slot across the day
 							const autoTime = isAutoMode ? generateRandom15MinSlot(opts.dos) : null;
 							const autoRoom = isAutoMode ? pickRandomRoom(roomsList) : {};
+							const autoApptType = isAutoMode ? pickRandomApptType(apptTypesList) : {};
+							const autoFeeSchedule = isAutoMode ? pickRandomFeeSchedule(feeSchedulesList) : undefined;
 							const cs = await createCaseSummary({
 								apiBaseUrl,
 								token,
 								patientResponse: patientSource,
 								roomIdOverride: (patientSource && (patientSource.roomId || patientSource.roomId === 0)) ? (patientSource.roomId as number) : (isAutoMode && autoRoom.roomId !== undefined ? autoRoom.roomId : (opts.roomIdOverride === undefined ? undefined : opts.roomIdOverride)),
 								roomNameOverride: (patientSource && (patientSource as any).roomName) ? (patientSource as any).roomName as string : (isAutoMode && autoRoom.roomName ? autoRoom.roomName : (opts.roomNameOverride === undefined ? undefined : opts.roomNameOverride)),
-								appointmentTypeIdOverride: (patientSource && (patientSource.appointmentTypeId || patientSource.appointmentTypeId === 0)) ? (patientSource.appointmentTypeId as number) : (opts.appointmentTypeIdOverride === undefined ? undefined : opts.appointmentTypeIdOverride),
-								appointmentTypeNameOverride: (patientSource && patientSource.appointmentTypeName) ? (patientSource.appointmentTypeName as string) : (opts.appointmentTypeNameOverride === undefined ? undefined : opts.appointmentTypeNameOverride),
+								appointmentTypeIdOverride: (patientSource && (patientSource.appointmentTypeId || patientSource.appointmentTypeId === 0)) ? (patientSource.appointmentTypeId as number) : (isAutoMode && autoApptType.appointmentTypeId !== undefined ? autoApptType.appointmentTypeId : (opts.appointmentTypeIdOverride === undefined ? undefined : opts.appointmentTypeIdOverride)),
+								appointmentTypeNameOverride: (patientSource && patientSource.appointmentTypeName) ? (patientSource.appointmentTypeName as string) : (isAutoMode && autoApptType.appointmentTypeName ? autoApptType.appointmentTypeName : (opts.appointmentTypeNameOverride === undefined ? undefined : opts.appointmentTypeNameOverride)),
 								physicianIdOverride: (patientSource && (patientSource.primaryPhysicianId || patientSource.primaryPhysicianId === 0)) ? (patientSource.primaryPhysicianId as number) : (opts.physicianIdOverride === undefined ? undefined : (opts as any).physicianIdOverride),
 								physicianNameOverride: (patientSource && patientSource.primaryPhysician) ? (patientSource.primaryPhysician as string) : ((opts as any).physicianNameOverride === undefined ? undefined : (opts as any).physicianNameOverride),
-								feeScheduleOverride: (opts as any).feeScheduleOverride,
+								feeScheduleOverride: (opts as any).feeScheduleOverride ?? autoFeeSchedule,
 								dos: opts.dos,
 								logFn,
 								insuranceInsertResponse: insertInsuranceResponse,

@@ -73,7 +73,7 @@ app.post('/seed', (req, res) => {
 		try {
 			const opts = req.body && req.body.opts ? req.body.opts : {};
 			const actionStr = String((opts && (opts as any).action) ? (opts as any).action : 'createBasicPatients');
-			const isAutoSeedAction = ['createBasicPatients','dischargeCases','casesToCode','chargeEntry'].includes(actionStr);
+			const isAutoSeedAction = ['createBasicPatients','dischargeCases','casesToCode','chargeEntry','patientStatementsTracker'].includes(actionStr);
 			if (isAutoSeedAction) {
 				const runStart = Date.now();
 				// collect relevant headers from the incoming request to mimic UI behavior
@@ -93,7 +93,9 @@ app.post('/seed', (req, res) => {
 				let insuranceOverrides: InsuranceInsertOverrides | undefined;
 				let insuranceOverridesList: InsuranceInsertOverrides[] | undefined;
 				const shouldCreateInsurance = (opts.mode !== 'auto') && String(opts.insuranceType || '').toLowerCase() === 'create';
-				if (opts.mode === 'auto') {
+				const actionLower = actionStr.toLowerCase();
+				const autoCreateInsurance = (opts.mode === 'auto') && actionLower !== 'patientstatementstracker';
+				if (autoCreateInsurance) {
 					// Auto mode: create a single insurance with random suffix and map to all cases
 					const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
 					const one = await createInsurance({
@@ -131,13 +133,12 @@ app.post('/seed', (req, res) => {
 					insuranceOverrides = insuranceOverridesList[0];
 								}
 								// Infer flow depth from action when not explicitly provided
-								const actionLower = String((opts && (opts as any).action) || '').toLowerCase();
 								let inferredFlowDepth: number | undefined = undefined;
 								if (actionLower) {
 									if (actionLower === 'createbasicpatients' || actionLower === 'createcase') inferredFlowDepth = 0;
 									else if (actionLower === 'dischargecases' || actionLower === 'discharge') inferredFlowDepth = 1;
 									else if (actionLower === 'casestocode') inferredFlowDepth = 2;
-									else if (actionLower === 'chargeentry') inferredFlowDepth = 3;
+									  else if (actionLower === 'chargeentry' || actionLower === 'patientstatementstracker') inferredFlowDepth = 3;
 								}
 								const svcRes = await createBasicPatients({
 					apiBaseUrl: opts.apiUrl || opts.url,
@@ -166,7 +167,7 @@ app.post('/seed', (req, res) => {
 					selectedBatchId: typeof opts.batchId !== 'undefined' ? Number(opts.batchId) : undefined,
 					insuranceInsertOverrides: insuranceOverrides,
 					insuranceInsertOverridesList: insuranceOverridesList,
-					insuranceType: opts.mode === 'auto' ? 'create' : opts.insuranceType,
+					insuranceType: opts.mode === 'auto' ? (autoCreateInsurance ? 'create' : 'none') : opts.insuranceType,
 					insuranceCreateResult: insuranceResult || undefined,
 					insuranceCreateResults: insuranceResults || undefined,
 				});
