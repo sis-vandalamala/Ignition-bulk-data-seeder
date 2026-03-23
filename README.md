@@ -242,7 +242,7 @@ One-click seeding with intelligent defaults:
 
 #### Auto Mode UI
 
-![Auto Mode UI](docs/auto-mode-ui.png)
+![Auto Mode UI](docs/image.png)
 
 The Auto Mode interface consists of:
 
