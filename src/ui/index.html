@@ -12,13 +12,27 @@
       html,body{height:100%;}
       body { font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial; margin:0; background:var(--bg); color:#0f172a; }
       .wrap{max-width:1100px;margin:28px auto;padding:20px;}
-      .header{display:flex;align-items:center;gap:16px;margin-bottom:18px}
+      .header{display:flex;align-items:center;gap:16px;margin-bottom:18px;padding:0 20px;max-width:1400px;margin-left:auto;margin-right:auto}
       .logo{width:56px;height:56px;background:linear-gradient(135deg,#2b6cf6,#7c3aed);border-radius:12px;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:20px}
       .title{display:flex;flex-direction:column}
       .title h1{margin:0;font-size:20px}
       .brand{background:linear-gradient(90deg,#2b6cf6,#7c3aed,#ff7a18);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:700}
       .title p{margin:0;color:var(--muted);font-size:13px}
-
+      .auth-view{display:block}
+      .app-shell{max-width:1400px;margin:0 auto 24px;padding:0 20px;display:flex;gap:16px;align-items:flex-start}
+      .sidebar{width:280px;flex-shrink:0;background:var(--card);border-radius:16px;padding:16px;box-shadow:0 6px 18px rgba(15,23,42,0.06);position:sticky;top:16px}
+      .sidebar-brand{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+      .sidebar-logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#2b6cf6,#7c3aed);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700}
+      .sidebar-title{font-weight:700;font-size:14px}
+      .sidebar-subtitle{font-size:12px;color:var(--muted)}
+      .side-nav{display:flex;flex-direction:column;gap:8px}
+      .side-nav-btn{width:100%;text-align:left;background:transparent;color:#0f172a;border:1px solid rgba(15,23,42,0.06);padding:10px 12px;border-radius:10px}
+      .side-nav-btn.active{background:rgba(59,93,187,0.1);color:var(--primary);border-color:rgba(59,93,187,0.2);font-weight:700}
+      .main-panel{flex:1;min-width:0}
+      .view-panel{display:block}
+      .view-header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;padding:4px 0}
+      .view-header h2{margin:0;font-size:20px}
+      .compact-field{display:flex;flex-direction:column;gap:6px;min-width:140px}
       .card{background:var(--card);border-radius:12px;padding:18px;box-shadow:0 6px 18px rgba(15,23,42,0.06);margin-bottom:18px}
       .card.collapsed{padding-bottom:8px}
       .card .card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
@@ -34,6 +48,9 @@
 
       .muted{color:var(--muted);font-size:13px}
       .actions{margin-top:12px}
+      .is-hidden{display:none !important}
+      .is-block{display:block !important}
+      .is-flex{display:flex !important}
       button{background:var(--primary);color:#fff;border:none;padding:10px 16px;border-radius:10px;font-weight:600;cursor:pointer}
       button.secondary{background:transparent;border:1px solid rgba(15,23,42,0.06);color:#111827;padding:10px 14px}
       .hint{font-size:13px;color:var(--muted);margin-top:8px}
@@ -67,343 +84,346 @@
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <div class="header">
-        <div class="logo">⚡</div>
-        <div class="title">
-          <h1><span class="brand">Ignition</span></h1>
-          <p class="muted">Data Seeder Interface</p>
-        </div>
-        <div style="margin-left:auto">
-          <label class="field">Mode
-            <select id="mode">
-              <option value="manual">Manual</option>
-              <option value="auto" selected>Auto</option>
-            </select>
-          </label>
-        </div>
+    <div class="header">
+      <div class="logo">⚡</div>
+      <div class="title">
+        <h1><span class="brand">Ignition</span></h1>
+        <p class="muted">Data Seeder Interface</p>
       </div>
+    </div>
 
-      <div id="manualModePanel">
-      <div class="card" id="loginCard">
-        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-          <div style="font-weight:700">Login</div>
-          <div style="display:flex;align-items:center;gap:8px">
-            <button id="loginCollapseBtn" title="Collapse" aria-expanded="true" style="all:unset;cursor:pointer;display:flex;align-items:center;gap:6px">
-              <span id="loginCollapseIcon" style="display:inline-block;transform:rotate(0deg);transition:transform .2s">▾</span>
-              <span id="loginCollapseLabel" style="font-size:13px;color:var(--muted)">Collapse</span>
-            </button>
+    <div id="authView" class="auth-view">
+      <div class="wrap auth-wrap">
+        <div class="card" id="loginCard">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:700">Login</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <button id="loginCollapseBtn" title="Collapse" aria-expanded="true" style="all:unset;cursor:pointer;display:flex;align-items:center;gap:6px">
+                <span id="loginCollapseIcon" style="display:inline-block;transform:rotate(0deg);transition:transform .2s">▾</span>
+                <span id="loginCollapseLabel" style="font-size:13px;color:var(--muted)">Collapse</span>
+              </button>
+            </div>
+          </div>
+          <div id="loginCardBody">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
+              <div style="flex:1;min-width:280px">
+                <div class="grid">
+                  <div class="field">
+                    <label>Facility Id</label>
+                    <input id="facilityId" type="number" placeholder="e.g. 2030" value="40"/>
+                  </div>
+                  <div class="field" style="grid-column: span 3">
+                    <label>Target API URL</label>
+                    <!-- https://sisenterprise-api-324476e2-centralindia.siscompletedev.cloud/324476e2t1 -->
+                    <input id="apiUrl" type="url" value="https://cypressdevapi.amkaicloud.com/cypressdev" placeholder="https://cypressdevapi.amkaicloud.com/cypressdev" />
+                  </div>
+                  <div class="field">
+                    <label>Username</label>
+                    <input id="username" type="text" placeholder="username" value="sisadmin"/>
+                  </div>
+                  <div class="field" style="position:relative">
+                    <label>Password</label>
+                    <div style="position:relative;display:flex;align-items:center">
+                      <input id="password" type="password" placeholder="password" style="flex:1" value="Test#123"/>
+                      <button id="pwdToggle" title="Show password" aria-pressed="false" style="margin-left:8px;border-radius:8px;padding:8px;border:none;background:transparent;cursor:pointer">Show</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="actions">
+                  <button id="loginBtn">Login</button>
+                </div>
+                <div class="hint">Click Login to authenticate against the server and obtain a token for seeding.</div>
+              </div>
+            </div>
           </div>
         </div>
-        <div id="loginCardBody">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
-            <div style="flex:1;min-width:280px">
+      </div>
+    </div>
+
+    <div id="appShell" class="app-shell is-hidden">
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="sidebar-logo">⚡</div>
+          <div>
+            <div class="sidebar-title">Workspace</div>
+            <div class="sidebar-subtitle">Seeding tools</div>
+          </div>
+        </div>
+        <nav class="side-nav" aria-label="Primary">
+          <button class="side-nav-btn active" type="button" data-view="caseCreation">Case Creation</button>
+          <button class="side-nav-btn" type="button" data-view="contracts">Contracts</button>
+          <button class="side-nav-btn" type="button" data-view="transactions">Transactions</button>
+        </nav>
+      </aside>
+
+      <main class="main-panel">
+        <section id="caseCreationView" class="view-panel">
+          <div class="view-header">
+            <div>
+              <h2>Case Creation</h2>
+              <p class="muted">Run seeding workflows and monitor execution.</p>
+            </div>
+            <label class="field compact-field">Mode
+              <select id="mode">
+                <option value="manual">Manual</option>
+                <option value="auto" selected>Auto</option>
+              </select>
+            </label>
+          </div>
+
+          <div id="manualModePanel">
+            <div class="card is-hidden" id="supportCard">
+              <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+                <div style="display:flex;gap:12px;align-items:center">
+                  <div class="support-field-wrap">
+                    <div class="field">
+                      <label>Date of Service</label>
+                      <input id="dos" type="date" title="dd-mm-yyyy" />
+                    </div>
+                  </div>
+                  <div class="support-field-wrap">
+                    <div class="field">
+                      <label>Room</label>
+                      <select id="roomSelect">
+                        <option value="" disabled selected>Loading...</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <div class="support-field-wrap">
+                  <div class="field">
+                    <label>Appointment Type</label>
+                    <select id="apptTypeSelect">
+                      <option value="" disabled selected>Loading...</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="support-field-wrap">
+                  <div class="field">
+                    <label>Physician</label>
+                    <select id="physicianSelect">
+                      <option value="" disabled selected>Loading...</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="support-field-wrap">
+                  <div class="field">
+                    <label>CPT Code</label>
+                    <select id="cptSelect" multiple size="4">
+                      <option value="" disabled>Loading...</option>
+                    </select>
+                    <div class="muted" style="font-size:12px;margin-top:6px">Use the search and checkboxes to select multiple codes.</div>
+                  </div>
+                </div>
+                <div class="support-field-wrap">
+                  <div class="field">
+                    <label>Period/Batch</label>
+                    <div style="display:flex;gap:12px;align-items:center;margin-top:6px">
+                      <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="periodBatch" id="periodBatchSelect" value="select" checked /> Select</label>
+                      <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="periodBatch" id="periodBatchCreate" value="create" /> Create</label>
+                    </div>
+                      <div id="periodBatchHint" class="muted" style="margin-top:8px">Selecting "Create" will use the entered suffix to create a new period and batch.</div>
+                  </div>
+                </div>
+                <div class="support-field-wrap" id="periodSelectWrap" style="display:none">
+                  <div class="field">
+                    <label>Period</label>
+                    <select id="periodSelect">
+                      <option value="" disabled selected>Loading...</option>
+                    </select>
+                    <div class="muted" style="margin-top:6px;font-size:12px">Shows only periods that have batches</div>
+                  </div>
+                </div>
+                <div class="support-field-wrap" id="batchSelectWrap" style="display:none">
+                  <div class="field">
+                    <label>Batch</label>
+                    <select id="batchSelect">
+                      <option value="" disabled selected>Loading...</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="support-field-wrap">
+                    <div class="field">
+                    <label>Insurance</label>
+                    <div style="display:flex;gap:12px;align-items:center;margin-top:6px">
+                      <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="insuranceType" id="insuranceTypeNone" value="none" checked /> None</label>
+                      <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="insuranceType" id="insuranceTypeCreate" value="create" /> Create</label>
+                    </div>
+                      <div id="insuranceTypeHint" class="muted" style="margin-top:8px">Selecting "Create" will use the entered suffix to create a new insurance and associate it with the cases.</div>
+                  </div>
+                </div>
+                <div class="support-field-wrap" id="insuranceCreatePriorityWrap" style="display:none">
+                  <div class="field">
+                    <label>Insurance Priority</label>
+                    <select id="insurancePriority">
+                      <option value="primary" selected>Primary</option>
+                      <option value="p+s">Primary + Secondary</option>
+                      <option value="p+s+t">Primary + Sec + Tertiary</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="support-field-wrap" id="insuranceSelectWrap" style="display:none">
+                  <div class="field">
+                    <label>Insurance</label>
+                    <select id="insuranceSelect">
+                      <option value="" disabled selected>Loading...</option>
+                    </select>
+                    <div class="muted" style="margin-top:6px;font-size:12px">Select an existing insurance to map to the patient.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="card is-hidden" id="seedCard">
+              <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+                <div style="flex:1;min-width:320px">
+                  <div class="field">
+                    <label>Suffix</label>
+                    <input id="suffix" type="text" placeholder="e.g. 336152" />
+                    <div class="muted">Include the test case id in the suffix so generated records are easy to trace.</div>
+                  </div>
+                </div>
+                <div style="width:120px">
+                    <div class="field">
+                    <label style="color:var(--muted)">Number of Cases</label>
+                    <input id="count" type="number" min="1" value="1" />
+                  </div>
+                </div>
+                <div style="width:150px">
+                  <div class="field">
+                    <label>Concurrency</label>
+                    <input id="concurrency" type="number" min="1" value="4" />
+                    <div class="muted">Parallel API calls.</div>
+                  </div>
+                </div>
+                <div style="flex:1;min-width:320px">
+                  <div class="field">
+                    <label>Workflow</label>
+                    <input id="flowDepth" type="range" min="0" max="3" step="1" value="3" style="width:100%;margin-top:4px" data-depth="3" />
+                    <div class="flow-steps" id="flowSteps">
+                      <div class="flow-step" data-step="0"><button type="button" class="dot"></button><span class="label">Create Case</span></div>
+                      <div class="flow-step" data-step="1"><button type="button" class="dot"></button><span class="label">Discharge</span></div>
+                      <div class="flow-step" data-step="2"><button type="button" class="dot"></button><span class="label">Cases to Code</span></div>
+                      <div class="flow-step" data-step="3"><button type="button" class="dot"></button><span class="label">Charge Entry</span></div>
+                    </div>
+                    <div id="flowDepthLabel" class="flow-label" data-depth="3" style="margin-top:12px">Full: Charge Entry</div>
+                  </div>
+                </div>
+              </div>
+              <div class="actions" style="margin-top:16px">
+                <div style="display:flex;align-items:center;gap:12px">
+                  <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px">
+                    <div id="runProgressWrap" style="width:60%;min-width:220px;display:none;flex-direction:column;align-items:center;">
+                      <div id="runProgressBar" style="width:100%;height:10px;background:var(--trackBg);border-radius:999px;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,0.03)">
+                        <div id="runProgressFill" style="width:0%;height:100%;background:var(--trackFill);transition:width 300ms linear"></div>
+                      </div>
+                      <div id="runProgressLabel" style="font-size:12px;color:var(--muted);margin-top:6px;">Idle</div>
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <button id="runBtn">Run</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Rooms removed (disabled while not used) -->
+          </div><!-- /manualModePanel -->
+
+          <div id="autoModePanel" class="is-hidden">
+            <div class="card">
               <div class="grid">
                 <div class="field">
-                  <label>Facility Id</label>
-                  <input id="facilityId" type="number" placeholder="e.g. 2030" value="40"/>
-                </div>
-                <div class="field" style="grid-column: span 3">
-                  <label>Target API URL</label>
-                  <!-- https://sisenterprise-api-324476e2-centralindia.siscompletedev.cloud/324476e2t1 -->
-                  <input id="apiUrl" type="url" value="https://cypressdevapi.amkaicloud.com/cypressdev" placeholder="https://cypressdevapi.amkaicloud.com/cypressdev" />
+                  <label>Number of Cases</label>
+                  <input id="autoCount" type="number" min="1" value="1" />
                 </div>
                 <div class="field">
-                  <label>Username</label>
-                  <input id="username" type="text" placeholder="username" value="sisadmin"/>
+                  <label>Concurrency</label>
+                  <input id="autoConcurrency" type="number" min="1" value="4" />
                 </div>
-                <div class="field" style="position:relative">
-                  <label>Password</label>
-                  <div style="position:relative;display:flex;align-items:center">
-                    <input id="password" type="password" placeholder="password" style="flex:1" value="Test#123"/>
-                    <button id="pwdToggle" title="Show password" aria-pressed="false" style="margin-left:8px;border-radius:8px;padding:8px;border:none;background:transparent;cursor:pointer">Show</button>
-                  </div>
+                <div class="field" style="grid-column: span 2">
+                  <label>Workflow Action</label>
+                  <select id="autoActionSelect">
+                    <option value="createBasicPatients">Financial Clearance Tracker</option>
+                    <option value="dischargeCases">Cases to Code Tracker</option>
+                    <option value="casesToCode">Charge Entry Tracker</option>
+                    <option value="chargeEntry">Balance/Reconciliation Tracker</option>
+                  </select>
                 </div>
               </div>
               <div class="actions">
-                <button id="loginBtn">Login</button>
-              </div>
-              <div class="hint">Click Login to authenticate against the server and obtain a token for seeding.</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-            <div class="card" id="supportCard" style="display:none">
-        <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
-          <div style="display:flex;gap:12px;align-items:center">
-            <div class="support-field-wrap">
-              <div class="field">
-                <label>Date of Service</label>
-                <input id="dos" type="date" title="dd-mm-yyyy" />
-              </div>
-            </div>
-            <div class="support-field-wrap">
-              <div class="field">
-                <label>Room</label>
-                <select id="roomSelect">
-                  <option value="" disabled selected>Loading...</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <div class="support-field-wrap">
-            <div class="field">
-              <label>Appointment Type</label>
-              <select id="apptTypeSelect">
-                <option value="" disabled selected>Loading...</option>
-              </select>
-            </div>
-          </div>
-          <div class="support-field-wrap">
-            <div class="field">
-              <label>Physician</label>
-              <select id="physicianSelect">
-                <option value="" disabled selected>Loading...</option>
-              </select>
-            </div>
-          </div>
-          <div class="support-field-wrap">
-            <div class="field">
-              <label>CPT Code</label>
-              <select id="cptSelect" multiple size="4">
-                <option value="" disabled>Loading...</option>
-              </select>
-              <div class="muted" style="font-size:12px;margin-top:6px">Use the search and checkboxes to select multiple codes.</div>
-            </div>
-          </div>
-          <div class="support-field-wrap">
-            <div class="field">
-              <label>Period/Batch</label>
-              <div style="display:flex;gap:12px;align-items:center;margin-top:6px">
-                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="periodBatch" id="periodBatchSelect" value="select" checked /> Select</label>
-                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="periodBatch" id="periodBatchCreate" value="create" /> Create</label>
-              </div>
-                <div id="periodBatchHint" class="muted" style="margin-top:8px">Selecting "Create" will use the entered suffix to create a new period and batch.</div>
-            </div>
-          </div>
-          <div class="support-field-wrap" id="periodSelectWrap" style="display:none">
-            <div class="field">
-              <label>Period</label>
-              <select id="periodSelect">
-                <option value="" disabled selected>Loading...</option>
-              </select>
-              <div class="muted" style="margin-top:6px;font-size:12px">Shows only periods that have batches</div>
-            </div>
-          </div>
-          <div class="support-field-wrap" id="batchSelectWrap" style="display:none">
-            <div class="field">
-              <label>Batch</label>
-              <select id="batchSelect">
-                <option value="" disabled selected>Loading...</option>
-              </select>
-            </div>
-          </div>
-          <div class="support-field-wrap">
-              <div class="field">
-              <label>Insurance</label>
-              <div style="display:flex;gap:12px;align-items:center;margin-top:6px">
-                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="insuranceType" id="insuranceTypeNone" value="none" checked /> None</label>
-                <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="insuranceType" id="insuranceTypeCreate" value="create" /> Create</label>
-              </div>
-                <div id="insuranceTypeHint" class="muted" style="margin-top:8px">Selecting "Create" will use the entered suffix to create a new insurance and associate it with the cases.</div>
-            </div>
-          </div>
-          <div class="support-field-wrap" id="insuranceCreatePriorityWrap" style="display:none">
-            <div class="field">
-              <label>Insurance Priority</label>
-              <select id="insurancePriority">
-                <option value="primary" selected>Primary</option>
-                <option value="p+s">Primary + Secondary</option>
-                <option value="p+s+t">Primary + Sec + Tertiary</option>
-              </select>
-            </div>
-          </div>
-          <div class="support-field-wrap" id="insuranceSelectWrap" style="display:none">
-            <div class="field">
-              <label>Insurance</label>
-              <select id="insuranceSelect">
-                <option value="" disabled selected>Loading...</option>
-              </select>
-              <div class="muted" style="margin-top:6px;font-size:12px">Select an existing insurance to map to the patient.</div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      <div class="card" id="seedCard" style="display:none">
-        <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
-          <div style="flex:1;min-width:320px">
-            <div class="field">
-              <label>Suffix</label>
-              <input id="suffix" type="text" placeholder="e.g. 336152" />
-              <div class="muted">Include the test case id in the suffix so generated records are easy to trace.</div>
-            </div>
-          </div>
-          <div style="width:120px">
-              <div class="field">
-              <label style="color:var(--muted)">Number of Cases</label>
-              <input id="count" type="number" min="1" value="1" />
-            </div>
-          </div>
-          <div style="width:150px">
-            <div class="field">
-              <label>Concurrency</label>
-              <input id="concurrency" type="number" min="1" value="4" />
-              <div class="muted">Parallel API calls.</div>
-            </div>
-          </div>
-          <div style="flex:1;min-width:320px">
-            <div class="field">
-              <label>Workflow</label>
-              <input id="flowDepth" type="range" min="0" max="3" step="1" value="3" style="width:100%;margin-top:4px" data-depth="3" />
-              <div class="flow-steps" id="flowSteps">
-                <div class="flow-step" data-step="0"><button type="button" class="dot"></button><span class="label">Create Case</span></div>
-                <div class="flow-step" data-step="1"><button type="button" class="dot"></button><span class="label">Discharge</span></div>
-                <div class="flow-step" data-step="2"><button type="button" class="dot"></button><span class="label">Cases to Code</span></div>
-                <div class="flow-step" data-step="3"><button type="button" class="dot"></button><span class="label">Charge Entry</span></div>
-              </div>
-              <div id="flowDepthLabel" class="flow-label" data-depth="3" style="margin-top:12px">Full: Charge Entry</div>
-            </div>
-          </div>
-        </div>
-        <div class="actions" style="margin-top:16px">
-          <div style="display:flex;align-items:center;gap:12px">
-            <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px">
-              <div id="runProgressWrap" style="width:60%;min-width:220px;display:none;flex-direction:column;align-items:center;">
-                <div id="runProgressBar" style="width:100%;height:10px;background:var(--trackBg);border-radius:999px;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,0.03)">
-                  <div id="runProgressFill" style="width:0%;height:100%;background:var(--trackFill);transition:width 300ms linear"></div>
-                </div>
-                <div id="runProgressLabel" style="font-size:12px;color:var(--muted);margin-top:6px;">Idle</div>
-              </div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <button id="runBtn">Run</button>
-            </div>
-          </div>
-        </div>
-        
-      </div>
-
-
-
-      <!-- Rooms removed (disabled while not used) -->
-
-      </div><!-- /manualModePanel -->
-
-      <div id="autoModePanel" style="display:none">
-        <div class="card" id="autoLoginCard">
-          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-            <div style="font-weight:700">Auto Mode Login</div>
-          </div>
-          <div>
-            <div class="grid">
-              <div class="field">
-                <label>Facility Id</label>
-                <input id="autoFacilityId" type="number" placeholder="e.g. 2030" value="40" />
-              </div>
-              <div class="field" style="grid-column: span 3">
-                <label>Target API URL</label>
-                <input id="autoApiUrl" type="url" value="https://cypressdevapi.amkaicloud.com/cypressdev" placeholder="https://cypressdevapi.amkaicloud.com/cypressdev" />
-              </div>
-              <div class="field">
-                <label>Username</label>
-                <input id="autoUsername" type="text" placeholder="username" value="sisadmin" />
-              </div>
-              <div class="field">
-                <label>Password</label>
-                <input id="autoPassword" type="password" placeholder="password" value="Test#123" />
-              </div>
-            </div>
-            <div class="actions">
-              <button id="autoLoginBtn">Login</button>
-            </div>
-            <div class="hint">Authenticate before triggering automated runs.</div>
-          </div>
-        </div>
-
-        <div class="card" id="autoRunCard" style="display:none">
-          <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
-            <div style="width:120px">
-              <div class="field">
-                <label>Number of Cases</label>
-                <input id="autoCount" type="number" min="1" value="1" />
-              </div>
-            </div>
-            <div style="width:150px">
-              <div class="field">
-                <label>Concurrency</label>
-                <input id="autoConcurrency" type="number" min="1" value="4" />
-                <div class="muted">Parallel API calls.</div>
-              </div>
-            </div>
-            <div style="flex:1;min-width:320px">
-              <div class="field">
-                <label>Workflow Action</label>
-                <select id="autoActionSelect" style="width:100%;margin-top:6px;padding:10px 12px;border-radius:8px;background:var(--input);border:1px solid rgba(15,23,42,0.06)">
-                  <option value="createBasicPatients">Financial Clearance Tracker</option>
-                  <option value="dischargeCases">Cases to Code Tracker</option>
-                  <option value="casesToCode">Charge Entry Tracker</option>
-                  <option value="chargeEntry">Balance/Reconciliation Tracker</option>
-                  <option value="dischargeCases">Inventory Reconciliation Tracker</option>
-                  <option value="chargeEntry">Revenue Cycle Management Tracker</option>
-                  <option value="chargeEntry">Insurance Billing Tracker</option>
-                    <option value="patientStatementsTracker">Patient Statements Tracker</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <div class="actions" style="margin-top:16px">
-            <div style="display:flex;align-items:center;gap:12px">
-              <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px">
-                <div id="autoRunProgressWrap" style="width:60%;min-width:220px;display:none;flex-direction:column;align-items:center;">
-                  <div style="width:100%;height:10px;background:var(--trackBg);border-radius:999px;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,0.03)">
-                    <div id="autoRunProgressFill" style="width:0%;height:100%;background:var(--trackFill);transition:width 300ms linear"></div>
-                  </div>
-                  <div id="autoRunProgressLabel" style="font-size:12px;color:var(--muted);margin-top:6px;">Idle</div>
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;gap:8px">
                 <button id="autoRunBtn">Run</button>
               </div>
             </div>
           </div>
-        </div>
-      </div>
 
+          <div style="max-width:100%;margin:0 auto 36px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <div style="color:#94a3b8;font-size:13px;font-weight:600">Output Log</div>
+              <div id="elapsedDisplay" style="color:#94a3b8;font-size:13px;font-weight:600">Total: 0.00s</div>
+            </div>
+            <div class="card" style="background:#0f172a;color:#e6eef8;padding:0;max-width:100%;overflow:hidden;">
+              <div id="logToolbar" style="display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid rgba(230,238,248,0.12)">
+                <button id="logClearBtn" class="secondary" style="padding:6px 10px;border-radius:8px">Clear</button>
+                <label class="field" style="flex:1;margin:0">
+                  <input id="logFilter" type="text" placeholder="Filter by URL/method/status" style="background:#0b1220;color:#e6eef8;border-color:rgba(230,238,248,0.12)" />
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;color:#a5b4fc;font-size:12px"><input type="checkbox" id="logAutoScroll" checked /> Auto-scroll</label>
+              </div>
+              <div id="logCard" style="height:240px;overflow:auto;max-width:100%;">
+                <table id="logTable" style="width:100%;border-collapse:collapse;font-size:12px">
+                  <thead>
+                    <tr style="background:#111827;color:#cbd5e1;">
+                      <th style="text-align:left;padding:8px;border-bottom:1px solid rgba(230,238,248,0.08)">Time</th>
+                      <th style="text-align:left;padding:8px;border-bottom:1px solid rgba(230,238,248,0.08)">Method</th>
+                      <th style="text-align:left;padding:8px;border-bottom:1px solid rgba(230,238,248,0.08)">URL</th>
+                      <th style="text-align:left;padding:8px;border-bottom:1px solid rgba(230,238,248,0.08)">Status</th>
+                      <th style="text-align:right;padding:8px;border-bottom:1px solid rgba(230,238,248,0.08)">Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody id="logTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
 
+        <section id="contractsView" class="view-panel" style="display:none">
+          <div class="view-header">
+            <div>
+              <h2>Contracts</h2>
+              <p class="muted">Manage contract-related actions and status.</p>
+            </div>
+            <label class="field compact-field">Mode
+              <select id="contractsMode">
+                <option value="manual">Manual</option>
+                <option value="auto" selected>Auto</option>
+              </select>
+            </label>
+          </div>
+          <div class="card">
+            <div class="muted">Contracts functionality will be added here soon.</div>
+          </div>
+        </section>
 
-
-    </div>
-
-    <div style="max-width:1100px;margin:0 auto 36px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <div style="color:#94a3b8;font-size:13px;font-weight:600">Output Log</div>
-        <div id="elapsedDisplay" style="color:#94a3b8;font-size:13px;font-weight:600">Total: 0.00s</div>
-      </div>
-      <div class="card" style="background:#0f172a;color:#e6eef8;padding:0;max-width:100%;overflow:hidden;">
-        <div id="logToolbar" style="display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid rgba(230,238,248,0.12)">
-          <button id="logClearBtn" class="secondary" style="padding:6px 10px;border-radius:8px">Clear</button>
-          <label class="field" style="flex:1;margin:0">
-            <input id="logFilter" type="text" placeholder="Filter by URL/method/status" style="background:#0b1220;color:#e6eef8;border-color:rgba(230,238,248,0.12)" />
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;color:#a5b4fc;font-size:12px"><input type="checkbox" id="logAutoScroll" checked /> Auto-scroll</label>
-        </div>
-        <div id="logCard" style="height:240px;overflow:auto;max-width:100%;">
-          <table id="logTable" style="width:100%;border-collapse:collapse;font-size:12px">
-            <thead>
-              <tr style="background:#111827;color:#cbd5e1;">
-                <th style="text-align:left;padding:8px;border-bottom:1px solid rgba(230,238,248,0.08)">Time</th>
-                <th style="text-align:left;padding:8px;border-bottom:1px solid rgba(230,238,248,0.08)">Method</th>
-                <th style="text-align:left;padding:8px;border-bottom:1px solid rgba(230,238,248,0.08)">URL</th>
-                <th style="text-align:left;padding:8px;border-bottom:1px solid rgba(230,238,248,0.08)">Status</th>
-                <th style="text-align:right;padding:8px;border-bottom:1px solid rgba(230,238,248,0.08)">Duration</th>
-              </tr>
-            </thead>
-            <tbody id="logTableBody"></tbody>
-          </table>
-        </div>
-      </div>
+        <section id="transactionsView" class="view-panel" style="display:none">
+          <div class="view-header">
+            <div>
+              <h2>Transactions</h2>
+              <p class="muted">Review transaction activity and related operations.</p>
+            </div>
+            <label class="field compact-field">Mode
+              <select id="transactionsMode">
+                <option value="manual">Manual</option>
+                <option value="auto" selected>Auto</option>
+              </select>
+            </label>
+          </div>
+          <div class="card">
+            <div class="muted">Transactions functionality will be added here soon.</div>
+          </div>
+        </section>
+      </main>
     </div>
     <script src="./ui.js"></script>
   </body>

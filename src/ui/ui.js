@@ -1,23 +1,25 @@
 (()=>{
   const $ = id => document.getElementById(id);
   const mode = $('mode');
+  const contractsMode = $('contractsMode');
+  const transactionsMode = $('transactionsMode');
   const manualPanel = $('manualModePanel');
   const autoPanel = $('autoModePanel');
+  const authView = $('authView');
+  const appShell = $('appShell');
+  const caseCreationView = $('caseCreationView');
+  const contractsView = $('contractsView');
+  const transactionsView = $('transactionsView');
   const facilityId = $('facilityId');
   const apiUrl = $('apiUrl');
   const username = $('username');
   const password = $('password');
-  const autoFacilityId = $('autoFacilityId');
-  const autoApiUrl = $('autoApiUrl');
-  const autoUsername = $('autoUsername');
-  const autoPassword = $('autoPassword');
   const loginBtn = $('loginBtn');
   const loginCard = $('loginCard');
   const loginCardBody = $('loginCardBody');
   const loginCollapseBtn = $('loginCollapseBtn');
   const loginCollapseIcon = $('loginCollapseIcon');
   const loginCollapseLabel = $('loginCollapseLabel');
-  const autoLoginBtn = $('autoLoginBtn');
   const suffix = $('suffix');
   const count = $('count');
   const concurrency = $('concurrency');
@@ -43,14 +45,15 @@
   const insurancePriority = document.getElementById('insurancePriority');
   const dosInput = $('dos');
   const runBtn = $('runBtn');
-  const autoRunBtn = $('autoRunBtn');
+  const seedCard = $('seedCard');
+  const supportCard = $('supportCard');
   const logoEl = document.querySelector('.logo');
   const pwdToggle = document.getElementById('pwdToggle');
   const flowDepth = $('flowDepth');
   const flowDepthLabel = $('flowDepthLabel');
   const flowSteps = $('flowSteps');
   const autoActionSelect = $('autoActionSelect');
-  const autoRunCard = $('autoRunCard');
+  const autoRunBtn = $('autoRunBtn');
   const logEl = document.getElementById('logCard');
   const logTableBody = document.getElementById('logTableBody');
   const logFilter = document.getElementById('logFilter');
@@ -58,6 +61,7 @@
   const logAutoScroll = document.getElementById('logAutoScroll');
   const logBuffer = [];
   const LOG_BUFFER_LIMIT = 400;
+  let isAuthenticated = false;
   function isErrorStatus(status){
     if (status === null || typeof status === 'undefined') return false;
     const str = String(status).toLowerCase();
@@ -78,9 +82,19 @@
   const runProgressFill = document.getElementById('runProgressFill');
   const runProgressLabel = document.getElementById('runProgressLabel');
   const runProgressWrap = document.getElementById('runProgressWrap');
-  const autoRunProgressFill = document.getElementById('autoRunProgressFill');
-  const autoRunProgressLabel = document.getElementById('autoRunProgressLabel');
-  const autoRunProgressWrap = document.getElementById('autoRunProgressWrap');
+  const HIDDEN_CLASS = 'is-hidden';
+
+  function setVisibility(el, visible, displayMode = 'block') {
+    if (!el) return;
+    const displayClass = displayMode === 'flex' ? 'is-flex' : 'is-block';
+    el.classList.toggle(HIDDEN_CLASS, !visible);
+    if (visible) {
+      el.classList.add(displayClass);
+      el.classList.remove(displayMode === 'flex' ? 'is-block' : 'is-flex');
+    } else {
+      el.classList.remove('is-block', 'is-flex');
+    }
+  }
 
   // Bind default Date of Service to today's date (YYYY-MM-DD) if not already set
   if (dosInput && !dosInput.value) {
@@ -95,20 +109,31 @@
 
   function syncModePanels(){
     const current = mode ? mode.value : 'manual';
-    if (manualPanel) manualPanel.style.display = current === 'manual' ? '' : 'none';
-    if (autoPanel) autoPanel.style.display = current === 'auto' ? '' : 'none';
+    setVisibility(manualPanel, current === 'manual', 'block');
+    setVisibility(autoPanel, current === 'auto', 'block');
   }
-  syncModePanels();
-  if (mode) mode.addEventListener('change', () => {
+
+  function setActiveView(viewName){
+    if (!isAuthenticated) return;
+    const nextView = viewName === 'contracts' ? 'contracts' : (viewName === 'transactions' ? 'transactions' : 'caseCreation');
+    setVisibility(caseCreationView, nextView === 'caseCreation', 'block');
+    setVisibility(contractsView, nextView === 'contracts', 'block');
+    setVisibility(transactionsView, nextView === 'transactions', 'block');
+    document.querySelectorAll('.side-nav-btn').forEach(btn => {
+      const isActive = btn.getAttribute('data-view') === nextView;
+      btn.classList.toggle('active', isActive);
+    });
     syncModePanels();
-    try {
-      // when in manual mode, make the count field read-only; when auto, allow editing
-      if (count) count.readOnly = (mode.value === 'manual');
-      // reflect the same for autoCount visibility (existing UI handles panel switching)
-    } catch (e) {}
+  }
+
+  document.querySelectorAll('.side-nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => setActiveView(btn.getAttribute('data-view')));
   });
-  // initialize count readonly based on current mode
-  try { if (count) count.readOnly = (mode && mode.value ? mode.value === 'manual' : true); } catch (e) {}
+  syncModePanels();
+  if (mode) mode.addEventListener('change', syncModePanels);
+  if (contractsMode) contractsMode.addEventListener('change', () => {});
+  if (transactionsMode) transactionsMode.addEventListener('change', () => {});
+  try { if (count) count.readOnly = false; } catch (e) {}
 
   function initFlowDepthControls(inputEl, labelEl, stepsEl){
     if (!inputEl || !labelEl) return;
@@ -159,8 +184,8 @@
     let finalized = false;
     const clamp = (val) => Math.max(0, Math.min(100, Number(val) || 0));
     return {
-      show(){ if (wrap) wrap.style.display = ''; },
-      hide(){ if (wrap) wrap.style.display = 'none'; },
+      show(){ setVisibility(wrap, true, 'flex'); },
+      hide(){ setVisibility(wrap, false, 'flex'); },
       reset(text){
         this.stop();
         finalized = false;
@@ -203,7 +228,7 @@
 
   const progressControllers = {
     manual: createProgressController({ wrap: runProgressWrap, fill: runProgressFill, label: runProgressLabel }),
-    auto: createProgressController({ wrap: autoRunProgressWrap, fill: autoRunProgressFill, label: autoRunProgressLabel })
+    auto: createProgressController({ wrap: runProgressWrap, fill: runProgressFill, label: runProgressLabel })
   };
 
   let token = null;
@@ -792,8 +817,8 @@
     try {
       const sel = document.querySelector('input[name="periodBatch"]:checked');
       const showSelects = sel && sel.value === 'select';
-      if (periodSelectWrap) periodSelectWrap.style.display = showSelects ? '' : 'none';
-      if (batchSelectWrap) batchSelectWrap.style.display = showSelects ? '' : 'none';
+      setVisibility(periodSelectWrap, showSelects, 'block');
+      setVisibility(batchSelectWrap, showSelects, 'block');
     } catch (e) { /* ignore */ }
   }
   // attach listeners to radio buttons
@@ -808,10 +833,10 @@
       const sel = document.querySelector('input[name="insuranceType"]:checked');
       // show/hide create-priority UI when insuranceType is 'create'
       const isCreate = sel && sel.value === 'create';
-      if (insuranceCreatePriorityWrap) insuranceCreatePriorityWrap.style.display = isCreate ? '' : 'none';
+      setVisibility(insuranceCreatePriorityWrap, isCreate, 'block');
       // keep insuranceSelectWrap hidden by default (mapping via select not used)
       const showSelect = false;
-      if (insuranceSelectWrap) insuranceSelectWrap.style.display = showSelect ? '' : 'none';
+      setVisibility(insuranceSelectWrap, showSelect, 'block');
     } catch (e) { /* ignore */ }
   }
   try { if (insuranceTypeCreate) insuranceTypeCreate.addEventListener('change', updateInsuranceVisibility); } catch (e) {}
@@ -849,6 +874,7 @@
     const j = await res.json();
     if (j && j.ok && j.token) {
       token = j.token;
+      isAuthenticated = true;
       // Auto-collapse body, keep header visible
       try {
         if (loginCardBody) {
@@ -860,8 +886,11 @@
         }
       } catch (e) {}
       // Logged in — keep UI clean, skip noisy logs
-      try { document.getElementById('seedCard').style.display = ''; } catch (e) {}
-      try { document.getElementById('supportCard').style.display = ''; } catch (e) {}
+      setVisibility(authView, false, 'block');
+      setVisibility(appShell, true, 'flex');
+      setActiveView('caseCreation');
+      setVisibility(seedCard, true, 'block');
+      setVisibility(supportCard, true, 'block');
       // populate selects from returned support data if present
       try {
         if (j.rooms && Array.isArray(j.rooms) && roomSelect) {
@@ -1028,53 +1057,49 @@
       } catch (e) { /* ignore render login logs error */ }
     } else {
       // Login failed; keep logs minimal
-      try { document.getElementById('seedCard').style.display = 'none'; } catch (e) {}
-      try { document.getElementById('supportCard').style.display = 'none'; } catch (e) {}
+      isAuthenticated = false;
+      setVisibility(authView, true, 'block');
+      setVisibility(appShell, false, 'flex');
+      setVisibility(seedCard, false, 'block');
+      setVisibility(supportCard, false, 'block');
     }
   });
 
-  if (autoLoginBtn) {
-    autoLoginBtn.addEventListener('click', async () => {
-      // Keep logs in sync with login attempts
-      logBuffer.splice(0, logBuffer.length);
-      renderTable();
-      const res = await fetch('/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: autoUsername?.value, password: autoPassword?.value, facilityId: Number(autoFacilityId?.value), apiUrl: autoApiUrl?.value }) });
-      let j = null;
-      try { j = await res.json(); } catch (e) { j = null; }
-      if (j && j.ok && j.token) {
-        token = j.token;
-        if (autoRunCard) autoRunCard.style.display = '';
-      } else {
-        if (autoRunCard) autoRunCard.style.display = 'none';
-      }
-      if (j && Array.isArray(j.logs)) {
-        j.logs.forEach(l => {
-          try {
-            const when = formatTime(l.startTime || l.timestamp);
-            const status = l.status || (l.error ? 'error' : 'unknown');
-            const dur = Number(l.durationMs || 0);
-            const dsec = (dur/1000).toFixed(2)+'s';
-            pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
-          } catch (e) { /* ignore per-log parse error */ }
-        });
-        renderTable();
-      }
+  // logout removed — token is kept in-memory until page reload
+
+  if (autoRunBtn) {
+    autoRunBtn.addEventListener('click', async () => {
+      const payload = {
+        opts: {
+          action: autoActionSelect ? autoActionSelect.value : 'createBasicPatients',
+          mode: 'auto',
+          count: Number(autoCount && autoCount.value ? autoCount.value : 1) || 1,
+          concurrency: Number(autoConcurrency && autoConcurrency.value ? autoConcurrency.value : 0) || undefined,
+          apiUrl: apiUrl.value,
+          facilityId: Number(facilityId.value),
+          username: username.value,
+          password: password.value
+        }
+      };
+      await executeSeedRun({
+        payload,
+        progressCtrl: progressControllers.auto,
+        totalCount: Number(autoCount && autoCount.value ? autoCount.value : 1) || 1
+      });
     });
   }
-
-  // logout removed — token is kept in-memory until page reload
 
   if (loginCollapseBtn) {
     loginCollapseBtn.addEventListener('click', () => {
       if (!loginCardBody) return;
-      const isHidden = loginCardBody.style.display === 'none';
+      const isHidden = loginCardBody.classList.contains(HIDDEN_CLASS);
       if (isHidden) {
-        loginCardBody.style.display = 'block';
+        setVisibility(loginCardBody, true, 'block');
         if (loginCollapseIcon) loginCollapseIcon.style.transform = 'rotate(0deg)';
         if (loginCollapseLabel) loginCollapseLabel.textContent = 'Collapse';
         if (loginCard) loginCard.classList.remove('collapsed');
       } else {
-        loginCardBody.style.display = 'none';
+        setVisibility(loginCardBody, false, 'block');
         if (loginCollapseIcon) loginCollapseIcon.style.transform = 'rotate(-90deg)';
         if (loginCollapseLabel) loginCollapseLabel.textContent = 'Expand';
         if (loginCard) loginCard.classList.add('collapsed');
@@ -1173,7 +1198,7 @@
     const payload = {
       opts: {
         action: 'createBasicPatients',
-        mode: mode.value,
+        mode: 'manual',
         suffix: suffix.value,
         count: Number(count.value),
         concurrency: Number(concurrency && concurrency.value ? concurrency.value : 0) || undefined,
@@ -1217,28 +1242,6 @@
       totalCount: Number(count && count.value ? count.value : 1) || 1
     });
   });
-
-  if (autoRunBtn) {
-    autoRunBtn.addEventListener('click', async () => {
-      const payload = {
-        opts: {
-          action: autoActionSelect ? autoActionSelect.value : 'createBasicPatients',
-          mode: 'auto',
-          count: Number(autoCount && autoCount.value ? autoCount.value : 1) || 1,
-          concurrency: Number(autoConcurrency && autoConcurrency.value ? autoConcurrency.value : 0) || undefined,
-          apiUrl: autoApiUrl ? autoApiUrl.value : '',
-          facilityId: autoFacilityId && autoFacilityId.value ? Number(autoFacilityId.value) : undefined,
-          username: autoUsername ? autoUsername.value : '',
-          password: autoPassword ? autoPassword.value : ''
-        }
-      };
-      await executeSeedRun({
-        payload,
-        progressCtrl: progressControllers.auto,
-        totalCount: Number(autoCount && autoCount.value ? autoCount.value : 1) || 1
-      });
-    });
-  }
 
   // Progress UI removed
 })();
