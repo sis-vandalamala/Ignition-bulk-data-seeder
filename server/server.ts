@@ -207,6 +207,11 @@ app.post('/contracts', (req, res) => {
 				token,
 				count: Number(opts.count) || 1,
 				isHybridContract: !!opts.isHybridContract,
+				contractType: opts.contractType,
+				pctBilledCharges: typeof opts.pctBilledCharges === 'number' ? opts.pctBilledCharges : undefined,
+				effectiveDate: opts.effectiveDate,
+				expiryDate: opts.expiryDate,
+				notes: opts.notes,
 			});
 			const successCount = results.filter(r => r.ok).length;
 			const failureCount = results.length - successCount;

@@ -55,8 +55,17 @@
   const autoActionSelect = $('autoActionSelect');
   const autoRunBtn = $('autoRunBtn');
   const contractsAutoCount = $('contractsAutoCount');
+  const contractsManualCount = $('contractsManualCount');
   const contractsSendBtn = $('contractsSendBtn');
   const contractsStatus = $('contractsStatus');
+  const contractsAutoPanel = $('contractsAutoPanel');
+  const contractsManualPanel = $('contractsManualPanel');
+  const contractEffectiveDate = $('contractEffectiveDate');
+  const contractExpiryDate = $('contractExpiryDate');
+  const contractType = $('contractType');
+  const contractNotes = $('contractNotes');
+  const contractPctBilledChargesWrap = $('contractPctBilledChargesWrap');
+  const contractPctBilledCharges = $('contractPctBilledCharges');
   const logEl = document.getElementById('logCard');
   const logTableBody = document.getElementById('logTableBody');
   const logFilter = document.getElementById('logFilter');
@@ -134,7 +143,19 @@
   });
   syncModePanels();
   if (mode) mode.addEventListener('change', syncModePanels);
-  if (contractsMode) contractsMode.addEventListener('change', () => {});
+  function syncContractsModePanels(){
+    const current = contractsMode ? contractsMode.value : 'auto';
+    setVisibility(contractsAutoPanel, current === 'auto', 'block');
+    setVisibility(contractsManualPanel, current === 'manual', 'block');
+  }
+  syncContractsModePanels();
+  if (contractsMode) contractsMode.addEventListener('change', syncContractsModePanels);
+  function syncContractTypeFields(){
+    const isPctBilledCharges = contractType && contractType.value === '% of Billed Charges';
+    setVisibility(contractPctBilledChargesWrap, isPctBilledCharges, 'block');
+  }
+  syncContractTypeFields();
+  if (contractType) contractType.addEventListener('change', syncContractTypeFields);
   if (transactionsMode) transactionsMode.addEventListener('change', () => {});
   try { if (count) count.readOnly = false; } catch (e) {}
 
@@ -1098,8 +1119,19 @@
 
   if (contractsSendBtn) {
     contractsSendBtn.addEventListener('click', async () => {
+      const isManual = contractsMode && contractsMode.value === 'manual';
       const payload = {
-        opts: {
+        opts: isManual ? {
+          apiUrl: apiUrl.value,
+          facilityId: Number(facilityId.value),
+          count: Number(contractsManualCount && contractsManualCount.value ? contractsManualCount.value : 1) || 1,
+          isHybridContract: false,
+          contractType: contractType ? contractType.value : undefined,
+          pctBilledCharges: (contractType && contractType.value === '% of Billed Charges' && contractPctBilledCharges && contractPctBilledCharges.value !== '') ? Number(contractPctBilledCharges.value) : undefined,
+          effectiveDate: contractEffectiveDate ? contractEffectiveDate.value : undefined,
+          expiryDate: contractExpiryDate ? contractExpiryDate.value : undefined,
+          notes: contractNotes ? contractNotes.value : undefined
+        } : {
           apiUrl: apiUrl.value,
           facilityId: Number(facilityId.value),
           count: Number(contractsAutoCount && contractsAutoCount.value ? contractsAutoCount.value : 1) || 1

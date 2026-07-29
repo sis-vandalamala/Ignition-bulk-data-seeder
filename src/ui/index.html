@@ -40,7 +40,8 @@
       .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
       label{font-size:13px;color:#111827}
       .field{display:flex;flex-direction:column;gap:6px}
-      input[type=text], input[type=password], input[type=url], input[type=number], input[type=date], select{background:var(--input);border:1px solid rgba(15,23,42,0.06);padding:10px 12px;border-radius:8px;font-size:14px;color:#0f172a}
+      input[type=text], input[type=password], input[type=url], input[type=number], input[type=date], select, textarea{background:var(--input);border:1px solid rgba(15,23,42,0.06);padding:10px 12px;border-radius:8px;font-size:14px;color:#0f172a;font-family:inherit}
+      textarea{resize:vertical}
 
       /* Uniform spacing for support card fields */
       .support-field-wrap { display:inline-block; vertical-align:top; width:200px; margin-right:12px; padding-bottom:6px }
@@ -402,10 +403,47 @@
             </label>
           </div>
           <div class="card">
-            <div class="grid">
-              <div class="field">
-                <label>Number of Contracts</label>
-                <input id="contractsAutoCount" type="number" min="1" value="1" />
+            <div id="contractsAutoPanel">
+              <div class="grid">
+                <div class="field">
+                  <label>Number of Contracts</label>
+                  <input id="contractsAutoCount" type="number" min="1" value="1" />
+                </div>
+              </div>
+            </div>
+            <div id="contractsManualPanel" class="is-hidden">
+              <div class="grid">
+                <div class="field">
+                  <label>Number of Contracts</label>
+                  <input id="contractsManualCount" type="number" min="1" value="1" />
+                </div>
+                <div class="field">
+                  <label>Effective Date</label>
+                  <input id="contractEffectiveDate" type="date" />
+                </div>
+                <div class="field">
+                  <label>Expiry Date</label>
+                  <input id="contractExpiryDate" type="date" />
+                </div>
+                <div class="field">
+                  <label>Contract Type</label>
+                  <select id="contractType">
+                    <option value="% of Billed Charges" selected>% of Billed Charges</option>
+                    <option value="Contract Fee Schedule">Contract Fee Schedule</option>
+                    <option value="Grouper">Grouper</option>
+                  </select>
+                </div>
+                <div class="field" id="contractPctBilledChargesWrap">
+                  <label>% of Billed Charges</label>
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <input id="contractPctBilledCharges" type="number" min="0" max="100" step="0.01" style="flex:1" />
+                    <span class="muted">%</span>
+                  </div>
+                </div>
+              </div>
+              <div class="field" style="margin-top:12px">
+                <label>Notes</label>
+                <textarea id="contractNotes" rows="4" placeholder="Additional notes..."></textarea>
               </div>
             </div>
             <div class="actions">
