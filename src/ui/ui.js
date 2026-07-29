@@ -54,6 +54,9 @@
   const flowSteps = $('flowSteps');
   const autoActionSelect = $('autoActionSelect');
   const autoRunBtn = $('autoRunBtn');
+  const contractsAutoCount = $('contractsAutoCount');
+  const contractsSendBtn = $('contractsSendBtn');
+  const contractsStatus = $('contractsStatus');
   const logEl = document.getElementById('logCard');
   const logTableBody = document.getElementById('logTableBody');
   const logFilter = document.getElementById('logFilter');
@@ -240,6 +243,10 @@
   let _cachedPeriods = null;
   let _cachedBatches = null;
   let _cachedInsurances = null;
+  function escapeHtml(str){
+    return String(str == null ? '' : str).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  }
+
   function renderTable(){
     if (!logTableBody) return;
     const q = (logFilter && logFilter.value ? logFilter.value.toLowerCase() : '').trim();
@@ -253,7 +260,7 @@
         <td style=\"padding:6px 8px;color:#cbd5e1;white-space:nowrap\">${r.time}</td>
         <td style=\"padding:6px 8px;color:#a5b4fc;white-space:nowrap\">${r.method}</td>
         <td style=\"padding:6px 8px;color:#e6eef8;max-width:560px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\" title=\"${r.url}\">${r.url}</td>
-        <td style=\"padding:6px 8px;color:${statusColor};white-space:nowrap\">${r.status}</td>
+        <td style=\"padding:6px 8px;color:${statusColor};white-space:nowrap\" title=\"${escapeHtml(r.error || '')}\">${r.status}</td>
         <td style=\"padding:6px 8px;text-align:right;color:#cbd5e1;white-space:nowrap\">${r.duration}</td>
       `;
       logTableBody.appendChild(tr);
@@ -1086,6 +1093,46 @@
         progressCtrl: progressControllers.auto,
         totalCount: Number(autoCount && autoCount.value ? autoCount.value : 1) || 1
       });
+    });
+  }
+
+  if (contractsSendBtn) {
+    contractsSendBtn.addEventListener('click', async () => {
+      const payload = {
+        opts: {
+          apiUrl: apiUrl.value,
+          facilityId: Number(facilityId.value),
+          count: Number(contractsAutoCount && contractsAutoCount.value ? contractsAutoCount.value : 1) || 1
+        }
+      };
+      contractsSendBtn.disabled = true;
+      if (contractsStatus) contractsStatus.textContent = 'Sending...';
+      try {
+        const res = await fetch('/contracts', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
+        const j = await res.json();
+        if (j && Array.isArray(j.logs)) {
+          j.logs.forEach(l => {
+            const when = formatTime(l.startTime || l.timestamp);
+            const status = l.status || (l.error ? 'error' : 'unknown');
+            const dur = Number(l.durationMs || 0);
+            const dsec = (dur/1000).toFixed(2) + 's';
+            pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
+          });
+          renderTable();
+        }
+        if (contractsStatus) {
+          const total = payload.opts.count;
+          const successCount = (j && typeof j.successCount === 'number') ? j.successCount : undefined;
+          const failureCount = (j && typeof j.failureCount === 'number') ? j.failureCount : undefined;
+          contractsStatus.textContent = (successCount !== undefined)
+            ? `Created ${successCount}/${total}${failureCount ? ` (${failureCount} failed)` : ''}`
+            : (j && j.error ? `Failed: ${j.error}` : 'Done');
+        }
+      } catch (e) {
+        if (contractsStatus) contractsStatus.textContent = 'Failed: network error';
+      } finally {
+        contractsSendBtn.disabled = false;
+      }
     });
   }
 

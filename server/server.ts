@@ -7,6 +7,7 @@ import { createBasicPatients } from '../src/services/patient.service';
 import { createInsurance, extractInsuranceInsertOverrides } from '../src/services/insurance.service';
 import type { InsuranceInsertOverrides } from '../src/services/insurance.service';
 import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID, getFeeSchedules, getPeriodBatches, getInsuranceCarriers } from '../src/services/support.service';
+import { createContracts } from '../src/services/contract.service';
 
 const app = express();
 app.use(express.json());
@@ -183,6 +184,35 @@ app.post('/seed', (req, res) => {
 			}
 
 			return res.json({ ok: true, message: 'seed run finished (stub)', tokenPresent: !!token, logs });
+		} finally {
+			setGlobalApiLogger(undefined);
+		}
+	})();
+});
+
+app.post('/contracts', (req, res) => {
+	const token = (req.app.locals as any).token || (req.headers as any).token || null;
+
+	const logs: Array<any> = [];
+	const logger = (entry: any) => {
+		try { logs.push(entry); } catch (e) {}
+	};
+	setGlobalApiLogger(logger);
+
+	(async () => {
+		try {
+			const opts = req.body && req.body.opts ? req.body.opts : {};
+			const results = await createContracts({
+				apiBaseUrl: opts.apiUrl || opts.url,
+				token,
+				count: Number(opts.count) || 1,
+				isHybridContract: !!opts.isHybridContract,
+			});
+			const successCount = results.filter(r => r.ok).length;
+			const failureCount = results.length - successCount;
+			return res.json({ ok: failureCount === 0, results, successCount, failureCount, tokenPresent: !!token, logs });
+		} catch (e: any) {
+			return res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e), logs });
 		} finally {
 			setGlobalApiLogger(undefined);
 		}

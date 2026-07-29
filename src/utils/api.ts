@@ -72,6 +72,7 @@ export async function postJson(url: string, payload: any, timeout = 5000, header
 		const duration = end - start;
 		const entry: ApiLogEntry = { url, method: 'POST', status: res.status, durationMs: duration, startTime: startIso, endTime: endIso, timestamp: endIso };
 		emitLog(entry, logFn);
+		console.log(res)
 		return res.data;
 	} catch (err: any) {
 			const end = Date.now();
@@ -79,9 +80,51 @@ export async function postJson(url: string, payload: any, timeout = 5000, header
 			const duration = end - start;
 			const resp = err && err.response ? err.response : undefined;
 			const statusVal = resp && resp.status ? resp.status : 'error';
-			const entry: ApiLogEntry = { url, method: 'POST', status: statusVal, durationMs: duration, error: err && err.message ? err.message : String(err), startTime: startIso, endTime: endIso, timestamp: endIso };
+			const entry: ApiLogEntry = { url, method: 'POST', status: statusVal, durationMs: duration, error: formatErrorWithBody(err, resp), startTime: startIso, endTime: endIso, timestamp: endIso };
 		emitLog(entry, logFn);
 		throw err;
+	}
+}
+
+export async function putJson(url: string, payload: any, timeout = 5000, headers?: Record<string, any>, logFn?: (entry: ApiLogEntry) => void) {
+	const start = Date.now();
+	const startIso = new Date(start).toISOString();
+	const opts: any = { timeout };
+	if (headers && Object.keys(headers).length) opts.headers = headers;
+	try {
+		const res = await axios.put(url, payload, opts);
+		const end = Date.now();
+		const endIso = new Date(end).toISOString();
+		const duration = end - start;
+		const entry: ApiLogEntry = { url, method: 'PUT', status: res.status, durationMs: duration, startTime: startIso, endTime: endIso, timestamp: endIso };
+		emitLog(entry, logFn);
+		return res.data;
+	} catch (err: any) {
+		const end = Date.now();
+		const endIso = new Date(end).toISOString();
+		const duration = end - start;
+		const resp = err && err.response ? err.response : undefined;
+		const statusVal = resp && resp.status ? resp.status : 'error';
+		const entry: ApiLogEntry = { url, method: 'PUT', status: statusVal, durationMs: duration, error: formatErrorWithBody(err, resp), startTime: startIso, endTime: endIso, timestamp: endIso };
+		emitLog(entry, logFn);
+		throw err;
+	}
+}
+
+// Include the response body in the logged error so validation/conflict reasons
+// from the target API (e.g. "duplicate name", "facilityId required") are visible
+// in the Output Log instead of just a generic "Request failed with status code X".
+function formatErrorWithBody(err: any, resp?: any) {
+	let base = err && err.message ? err.message : String(err);
+	if (!resp) return base;
+	const allowHeader = resp.headers && (resp.headers.allow || resp.headers.Allow);
+	if (allowHeader) base = `${base} :: Allow: ${allowHeader}`;
+	if (resp.data === undefined || resp.data === null) return base;
+	try {
+		const bodyStr = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+		return bodyStr ? `${base} :: ${bodyStr}` : base;
+	} catch (e) {
+		return base;
 	}
 }
 
