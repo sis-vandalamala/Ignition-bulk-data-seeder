@@ -66,6 +66,17 @@
   const contractNotes = $('contractNotes');
   const contractPctBilledChargesWrap = $('contractPctBilledChargesWrap');
   const contractPctBilledCharges = $('contractPctBilledCharges');
+  const contractPctAllowedWrap = $('contractPctAllowedWrap');
+  const contractPctAllowed = $('contractPctAllowed');
+  const transactionsAutoPanel = $('transactionsAutoPanel');
+  const transactionsManualPanel = $('transactionsManualPanel');
+  const transactionsAutoCount = $('transactionsAutoCount');
+  const transactionsManualCount = $('transactionsManualCount');
+  const transactionCodeType = $('transactionCodeType');
+  const transactionCodeToDebit = $('transactionCodeToDebit');
+  const transactionCodeToCredit = $('transactionCodeToCredit');
+  const transactionsSendBtn = $('transactionsSendBtn');
+  const transactionsStatus = $('transactionsStatus');
   const logEl = document.getElementById('logCard');
   const logTableBody = document.getElementById('logTableBody');
   const logFilter = document.getElementById('logFilter');
@@ -152,11 +163,19 @@
   if (contractsMode) contractsMode.addEventListener('change', syncContractsModePanels);
   function syncContractTypeFields(){
     const isPctBilledCharges = contractType && contractType.value === '% of Billed Charges';
+    const isContractFeeSchedule = contractType && contractType.value === 'Contract Fee Schedule';
     setVisibility(contractPctBilledChargesWrap, isPctBilledCharges, 'block');
+    setVisibility(contractPctAllowedWrap, isContractFeeSchedule, 'block');
   }
   syncContractTypeFields();
   if (contractType) contractType.addEventListener('change', syncContractTypeFields);
-  if (transactionsMode) transactionsMode.addEventListener('change', () => {});
+  function syncTransactionsModePanels(){
+    const current = transactionsMode ? transactionsMode.value : 'auto';
+    setVisibility(transactionsAutoPanel, current === 'auto', 'block');
+    setVisibility(transactionsManualPanel, current === 'manual', 'block');
+  }
+  syncTransactionsModePanels();
+  if (transactionsMode) transactionsMode.addEventListener('change', syncTransactionsModePanels);
   try { if (count) count.readOnly = false; } catch (e) {}
 
   function initFlowDepthControls(inputEl, labelEl, stepsEl){
@@ -264,6 +283,7 @@
   let _cachedPeriods = null;
   let _cachedBatches = null;
   let _cachedInsurances = null;
+  let _cachedGeneralLedgerAccounts = null;
   function escapeHtml(str){
     return String(str == null ? '' : str).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   }
@@ -1050,6 +1070,26 @@
                 try { if (insuranceSelect && insuranceSelect._custom && typeof insuranceSelect._custom.refresh === 'function') insuranceSelect._custom.refresh(); } catch (e) {}
               }
             } catch (e) { /* ignore insurance populate errors */ }
+            // populate general ledger accounts for Transaction Codes To Debit/To Credit dropdowns
+            try {
+              const rawGla = Array.isArray(sup.generalLedgerAccounts)
+                ? sup.generalLedgerAccounts
+                : (sup.generalLedgerAccounts && Array.isArray(sup.generalLedgerAccounts.result) ? sup.generalLedgerAccounts.result
+                : (sup.generalLedgerAccounts && Array.isArray(sup.generalLedgerAccounts.data) ? sup.generalLedgerAccounts.data
+                : (sup.generalLedgerAccounts && Array.isArray(sup.generalLedgerAccounts.items) ? sup.generalLedgerAccounts.items : null)));
+              if (Array.isArray(rawGla)) {
+                _cachedGeneralLedgerAccounts = rawGla.slice();
+                const glaOptions = '<option value="">Select...</option>' + rawGla.map(gla => {
+                  const val = gla.generalLedgerAccountId ?? gla.glAccountId ?? gla.glAccountID ?? gla.id ?? gla.value ?? '';
+                  const number = gla.accountNumber ?? gla.AccountNumber ?? gla.glAccountNumber ?? gla.number ?? '';
+                  const name = gla.accountName ?? gla.AccountName ?? gla.generalLedgerAccountName ?? gla.name ?? '';
+                  const label = [number, name].filter(Boolean).join('; ') || JSON.stringify(gla);
+                  return `<option value="${val}">${label}</option>`;
+                }).join('');
+                if (transactionCodeToDebit) transactionCodeToDebit.innerHTML = glaOptions;
+                if (transactionCodeToCredit) transactionCodeToCredit.innerHTML = glaOptions;
+              }
+            } catch (e) { /* ignore general ledger accounts populate errors */ }
           } catch (e) { /* ignore populate support selects error */ }
           try {
             if (sup && Array.isArray(sup.logs)) {
@@ -1128,6 +1168,7 @@
           isHybridContract: false,
           contractType: contractType ? contractType.value : undefined,
           pctBilledCharges: (contractType && contractType.value === '% of Billed Charges' && contractPctBilledCharges && contractPctBilledCharges.value !== '') ? Number(contractPctBilledCharges.value) : undefined,
+          pctAllowed: (contractType && contractType.value === 'Contract Fee Schedule' && contractPctAllowed && contractPctAllowed.value !== '') ? Number(contractPctAllowed.value) : undefined,
           effectiveDate: contractEffectiveDate ? contractEffectiveDate.value : undefined,
           expiryDate: contractExpiryDate ? contractExpiryDate.value : undefined,
           notes: contractNotes ? contractNotes.value : undefined
@@ -1164,6 +1205,54 @@
         if (contractsStatus) contractsStatus.textContent = 'Failed: network error';
       } finally {
         contractsSendBtn.disabled = false;
+      }
+    });
+  }
+
+  if (transactionsSendBtn) {
+    transactionsSendBtn.addEventListener('click', async () => {
+      const isManual = transactionsMode && transactionsMode.value === 'manual';
+      const payload = {
+        opts: isManual ? {
+          apiUrl: apiUrl.value,
+          facilityId: Number(facilityId.value),
+          count: Number(transactionsManualCount && transactionsManualCount.value ? transactionsManualCount.value : 1) || 1,
+          type: transactionCodeType ? transactionCodeType.value : undefined,
+          toDebit: (transactionCodeToDebit && transactionCodeToDebit.value !== '') ? transactionCodeToDebit.value : undefined,
+          toCredit: (transactionCodeToCredit && transactionCodeToCredit.value !== '') ? transactionCodeToCredit.value : undefined
+        } : {
+          apiUrl: apiUrl.value,
+          facilityId: Number(facilityId.value),
+          count: Number(transactionsAutoCount && transactionsAutoCount.value ? transactionsAutoCount.value : 1) || 1
+        }
+      };
+      transactionsSendBtn.disabled = true;
+      if (transactionsStatus) transactionsStatus.textContent = 'Sending...';
+      try {
+        const res = await fetch('/transaction-codes', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
+        const j = await res.json();
+        if (j && Array.isArray(j.logs)) {
+          j.logs.forEach(l => {
+            const when = formatTime(l.startTime || l.timestamp);
+            const status = l.status || (l.error ? 'error' : 'unknown');
+            const dur = Number(l.durationMs || 0);
+            const dsec = (dur/1000).toFixed(2) + 's';
+            pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
+          });
+          renderTable();
+        }
+        if (transactionsStatus) {
+          const total = payload.opts.count;
+          const successCount = (j && typeof j.successCount === 'number') ? j.successCount : undefined;
+          const failureCount = (j && typeof j.failureCount === 'number') ? j.failureCount : undefined;
+          transactionsStatus.textContent = (successCount !== undefined)
+            ? `Created ${successCount}/${total}${failureCount ? ` (${failureCount} failed)` : ''}`
+            : (j && j.error ? `Failed: ${j.error}` : 'Done');
+        }
+      } catch (e) {
+        if (transactionsStatus) transactionsStatus.textContent = 'Failed: network error';
+      } finally {
+        transactionsSendBtn.disabled = false;
       }
     });
   }

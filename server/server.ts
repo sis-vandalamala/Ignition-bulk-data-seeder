@@ -6,8 +6,9 @@ import { postJson } from '../src/utils/api';
 import { createBasicPatients } from '../src/services/patient.service';
 import { createInsurance, extractInsuranceInsertOverrides } from '../src/services/insurance.service';
 import type { InsuranceInsertOverrides } from '../src/services/insurance.service';
-import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID, getFeeSchedules, getPeriodBatches, getInsuranceCarriers } from '../src/services/support.service';
+import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID, getFeeSchedules, getPeriodBatches, getInsuranceCarriers, getGeneralLedgerAccounts } from '../src/services/support.service';
 import { createContracts } from '../src/services/contract.service';
+import { createTransactionCodes } from '../src/services/transactionCode.service';
 
 const app = express();
 app.use(express.json());
@@ -209,9 +210,41 @@ app.post('/contracts', (req, res) => {
 				isHybridContract: !!opts.isHybridContract,
 				contractType: opts.contractType,
 				pctBilledCharges: typeof opts.pctBilledCharges === 'number' ? opts.pctBilledCharges : undefined,
+				pctAllowed: typeof opts.pctAllowed === 'number' ? opts.pctAllowed : undefined,
 				effectiveDate: opts.effectiveDate,
 				expiryDate: opts.expiryDate,
 				notes: opts.notes,
+			});
+			const successCount = results.filter(r => r.ok).length;
+			const failureCount = results.length - successCount;
+			return res.json({ ok: failureCount === 0, results, successCount, failureCount, tokenPresent: !!token, logs });
+		} catch (e: any) {
+			return res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e), logs });
+		} finally {
+			setGlobalApiLogger(undefined);
+		}
+	})();
+});
+
+app.post('/transaction-codes', (req, res) => {
+	const token = (req.app.locals as any).token || (req.headers as any).token || null;
+
+	const logs: Array<any> = [];
+	const logger = (entry: any) => {
+		try { logs.push(entry); } catch (e) {}
+	};
+	setGlobalApiLogger(logger);
+
+	(async () => {
+		try {
+			const opts = req.body && req.body.opts ? req.body.opts : {};
+			const results = await createTransactionCodes({
+				apiBaseUrl: opts.apiUrl || opts.url,
+				token,
+				count: Number(opts.count) || 1,
+				type: opts.type,
+				toDebit: opts.toDebit,
+				toCredit: opts.toCredit,
 			});
 			const successCount = results.filter(r => r.ok).length;
 			const failureCount = results.length - successCount;
@@ -284,13 +317,19 @@ app.post('/support-data', async (req, res) => {
 						(physicians as any).__insurances = ins;
 					} catch (e: any) { /* suppressed getInsuranceCarriers error */ }
 
+					let generalLedgerAccounts: any = undefined;
+					try {
+						// Fetch general ledger accounts (for Transaction Codes To Debit/To Credit dropdowns)
+						generalLedgerAccounts = await getGeneralLedgerAccounts(token as any, apiUrl);
+					} catch (e: any) { /* suppressed getGeneralLedgerAccounts error */ }
+
 					// suppressed support-data captured logs output
 					// include feeSchedule, periods and batches if available (stored on physicians.__* above)
 					const feeSchedule = (physicians as any && (physicians as any).__feeSchedule) ? (physicians as any).__feeSchedule : undefined;
 					const periods = (physicians as any && (physicians as any).__periods) ? (physicians as any).__periods : undefined;
 					const batches = (physicians as any && (physicians as any).__batches) ? (physicians as any).__batches : undefined;
 					const insurances = (physicians as any && (physicians as any).__insurances) ? (physicians as any).__insurances : undefined;
-					return res.json({ ok: true, rooms, appointmentTypes, physicians, feeSchedule, periods, batches, insurances, logs });
+					return res.json({ ok: true, rooms, appointmentTypes, physicians, feeSchedule, periods, batches, insurances, generalLedgerAccounts, logs });
 			} finally {
 				try { setGlobalApiLogger(undefined); } catch (e) {}
 			}

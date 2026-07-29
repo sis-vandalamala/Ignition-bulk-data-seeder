@@ -26,6 +26,7 @@ export type CreateContractOptions = {
 	isHybridContract?: boolean;
 	contractType?: string;
 	pctBilledCharges?: number;
+	pctAllowed?: number;
 	effectiveDate?: string;
 	expiryDate?: string;
 	notes?: string;
@@ -34,7 +35,7 @@ export type CreateContractOptions = {
 	logFn?: (entry: ApiLogEntry) => void;
 };
 
-export async function createContract({ apiBaseUrl, token, contractName, isHybridContract = false, contractType, pctBilledCharges, effectiveDate, expiryDate, notes, timeoutMs = 15000, extraHeaders, logFn }: CreateContractOptions) {
+export async function createContract({ apiBaseUrl, token, contractName, isHybridContract = false, contractType, pctBilledCharges, pctAllowed, effectiveDate, expiryDate, notes, timeoutMs = 15000, extraHeaders, logFn }: CreateContractOptions) {
 	if (!apiBaseUrl) throw new Error('apiBaseUrl is required');
 	if (!token) throw new Error('token is required');
 	const base = String(apiBaseUrl).replace(/\/$/, '');
@@ -47,6 +48,7 @@ export async function createContract({ apiBaseUrl, token, contractName, isHybrid
 	};
 	if (contractType !== undefined) payload.contractType = contractType;
 	if (pctBilledCharges !== undefined) payload.pctBilledCharges = pctBilledCharges;
+	if (pctAllowed !== undefined) payload.pctAllowed = pctAllowed;
 	if (effectiveDate !== undefined) payload.effectiveDate = effectiveDate;
 	if (expiryDate !== undefined) payload.expirationDate = expiryDate;
 	if (notes !== undefined) payload.notes = notes;
@@ -60,6 +62,7 @@ export type CreateContractsBatchOptions = {
 	isHybridContract?: boolean;
 	contractType?: string;
 	pctBilledCharges?: number;
+	pctAllowed?: number;
 	effectiveDate?: string;
 	expiryDate?: string;
 	notes?: string;
@@ -75,13 +78,13 @@ export type ContractAttemptResult = {
 	error?: string;
 };
 
-export async function createContracts({ apiBaseUrl, token, count = 1, isHybridContract = false, contractType, pctBilledCharges, effectiveDate, expiryDate, notes, timeoutMs, extraHeaders, logFn }: CreateContractsBatchOptions): Promise<ContractAttemptResult[]> {
+export async function createContracts({ apiBaseUrl, token, count = 1, isHybridContract = false, contractType, pctBilledCharges, pctAllowed, effectiveDate, expiryDate, notes, timeoutMs, extraHeaders, logFn }: CreateContractsBatchOptions): Promise<ContractAttemptResult[]> {
 	const total = Math.max(1, Number(count) || 1);
 	const results: ContractAttemptResult[] = [];
 	for (let i = 0; i < total; i += 1) {
 		const contractName = generateUniqueContractName();
 		try {
-			const data = await createContract({ apiBaseUrl, token, contractName, isHybridContract, contractType, pctBilledCharges, effectiveDate, expiryDate, notes, timeoutMs, extraHeaders, logFn });
+			const data = await createContract({ apiBaseUrl, token, contractName, isHybridContract, contractType, pctBilledCharges, pctAllowed, effectiveDate, expiryDate, notes, timeoutMs, extraHeaders, logFn });
 			results.push({ ok: true, contractName, data });
 		} catch (err: any) {
 			results.push({ ok: false, contractName, error: err && err.message ? err.message : String(err) });

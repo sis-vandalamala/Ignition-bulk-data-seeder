@@ -152,6 +152,26 @@ export async function getInsuranceCarriers(token: string, apiBaseUrl?: string, e
     }
 }
 
+export async function getGeneralLedgerAccounts(token: string, apiBaseUrl?: string, extraHeaders?: Record<string,string>) {
+    if (!apiBaseUrl) throw new Error('apiBaseUrl is required for getGeneralLedgerAccounts');
+    const base = String(apiBaseUrl).replace(/\/+$/, '');
+    const url = `${base}/api/facility/business/transaction-codes/general-ledger-accounts/is-active/false`;
+    const defaultHeaders: Record<string,string> = Object.assign({
+        Accept: 'application/json',
+        priority: 'u=1, i',
+        token,
+        Referer: base + '/',
+    }, extraHeaders || {});
+
+    try {
+        const res = await getJson(url, 15000, defaultHeaders as any);
+        return res;
+    } catch (err) {
+        const axiosRes = await axios.get(url, { headers: defaultHeaders, timeout: 15000, responseType: 'json' });
+        return axiosRes.data;
+    }
+}
+
 export async function createPeriod(token: string, apiBaseUrl?: string, periodPayload?: any, extraHeaders?: Record<string,string>) {
     if (!apiBaseUrl) throw new Error('apiBaseUrl is required for createPeriod');
     const base = String(apiBaseUrl).replace(/\/+$/, '');
@@ -195,4 +215,5 @@ export default {
     releaseRecordLock,
     getFeeSchedules,
     getInsuranceCarriers,
+    getGeneralLedgerAccounts,
 };

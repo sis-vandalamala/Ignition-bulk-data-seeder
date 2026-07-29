@@ -153,7 +153,7 @@
         <nav class="side-nav" aria-label="Primary">
           <button class="side-nav-btn active" type="button" data-view="caseCreation">Case Creation</button>
           <button class="side-nav-btn" type="button" data-view="contracts">Contracts</button>
-          <button class="side-nav-btn" type="button" data-view="transactions">Transactions</button>
+          <button class="side-nav-btn" type="button" data-view="transactions">Transaction Codes</button>
         </nav>
       </aside>
 
@@ -440,6 +440,12 @@
                     <span class="muted">%</span>
                   </div>
                 </div>
+                <div class="field" id="contractPctAllowedWrap">
+                  <label>% of Allowed</label>
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <input id="contractPctAllowed" type="number" min="0" max="100" step="0.01" style="flex:1" />
+                  </div>
+                </div>
               </div>
               <div class="field" style="margin-top:12px">
                 <label>Notes</label>
@@ -456,8 +462,8 @@
         <section id="transactionsView" class="view-panel" style="display:none">
           <div class="view-header">
             <div>
-              <h2>Transactions</h2>
-              <p class="muted">Review transaction activity and related operations.</p>
+              <h2>Transaction Codes</h2>
+              <p class="muted">Create transaction codes.</p>
             </div>
             <label class="field compact-field">Mode
               <select id="transactionsMode">
@@ -467,7 +473,50 @@
             </label>
           </div>
           <div class="card">
-            <div class="muted">Transactions functionality will be added here soon.</div>
+            <div id="transactionsAutoPanel">
+              <div class="grid">
+                <div class="field">
+                  <label>Number of Transactions</label>
+                  <input id="transactionsAutoCount" type="number" min="1" value="1" />
+                </div>
+              </div>
+            </div>
+            <div id="transactionsManualPanel" class="is-hidden">
+              <div class="grid">
+                <div class="field">
+                  <label>Number of Transaction Codes</label>
+                  <input id="transactionsManualCount" type="number" min="1" value="1" />
+                </div>
+                <div class="field">
+                  <label>Type</label>
+                  <select id="transactionCodeType">
+                    <option value="Allocation" selected>Allocation</option>
+                    <option value="Correction">Correction</option>
+                    <option value="Debit">Debit</option>
+                    <option value="Payment">Payment</option>
+                    <option value="Transfer">Transfer</option>
+                    <option value="Unassigned Payment">Unassigned Payment</option>
+                    <option value="Write-Off">Write-Off</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>To Debit</label>
+                  <select id="transactionCodeToDebit">
+                    <option value="">Select...</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>To Credit</label>
+                  <select id="transactionCodeToCredit">
+                    <option value="">Select...</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="actions">
+              <button id="transactionsSendBtn">Run</button>
+              <span id="transactionsStatus" class="muted" style="margin-left:12px"></span>
+            </div>
           </div>
         </section>
       </main>
