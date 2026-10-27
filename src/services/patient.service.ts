@@ -4,7 +4,7 @@ import path from 'path';
 import axios from 'axios';
 import { postJson, getJson, ApiLogEntry } from '../utils/api';
 import createCaseSummary from './caseSummary.service';
-import { requestRecordLock, releaseRecordLock, getPeriodBatches, createPeriod, createBatch, getRoomsForOrganization, getAppointmentTypeNameAndID, getFeeSchedules } from './support.service';
+import { requestRecordLock, releaseRecordLock, getPeriodBatches, createPeriod, createBatch, getRoomsForOrganization, getAppointmentTypeNameAndID, getFeeSchedules, getExternalFacilities } from './support.service';
 import { runDischargeFlow } from './discharge.service';
 import codingChargeEntry, { type ChargeEntryPeriodBatch } from './codingChargeEntry.service';
 import { insertInsuranceGemini, createInsertInsurancePayload, type InsuranceInsertOverrides, type CreateInsuranceResult } from './insurance.service';
@@ -15,7 +15,9 @@ import type { IGetDuplicatePatient } from '../models/getDuplicatePatients.interf
 const duplicatePatientTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'getDuplicatePatients.req.json');
 const createPatientTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'createPatient.req.json');
 let duplicatePatientTemplate: IGetDuplicatePatient | null = null;
+const createPatientAnesBillingTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'createPatient.anesBilling.req.json');
 let createPatientTemplate: any | null = null;
+let createPatientAnesBillingTemplate: any | null = null;
 
 const AUTO_FIRST_NAMES = [
 	'Avery', 'Atlas', 'Beck', 'Calla', 'Dorian', 'Elowen', 'Finn', 'Galen', 'Harbor', 'Indigo', 'Junia', 'Kai', 'Lennox', 'Mira', 'Nash', 'Opal', 'Pax', 'Quinn', 'Rowan', 'Sage', 'Thalia', 'Vera', 'Wyatt', 'Xander', 'Yara', 'Zane'
@@ -404,7 +406,16 @@ function loadTemplate(): IGetDuplicatePatient {
 	return duplicatePatientTemplate!;
 }
 
-function loadCreatePatientTemplate() {
+function loadCreatePatientTemplate(isAnesthesiaBilling = false) {
+	if (isAnesthesiaBilling) {
+		if (createPatientAnesBillingTemplate) return createPatientAnesBillingTemplate;
+		try {
+			createPatientAnesBillingTemplate = JSON.parse(fs.readFileSync(createPatientAnesBillingTemplatePath, 'utf8'));
+		} catch (err) {
+			throw new Error(`Failed to load createPatient anesthesia billing template: ${err}`);
+		}
+		return createPatientAnesBillingTemplate!;
+	}
 	if (createPatientTemplate) return createPatientTemplate;
 	try {
 		const raw = fs.readFileSync(createPatientTemplatePath, 'utf8');
@@ -476,6 +487,7 @@ export type CreateBasicPatientsOptions = {
 	logFn?: (entry: ApiLogEntry) => void;
 	username?: string;
 	extraHeaders?: Record<string, string>;
+    isAnesthesiaBilling?: boolean; // true when logged-in facility entityType is Anes Billing; clinical payloads otherwise
     flowDepth?: number; // 0 create only,1 discharge,2 cases-to-code,3 charge entry
 	mode?: 'manual' | 'auto';
 	periodBatchMode?: PeriodBatchMode;
@@ -514,10 +526,10 @@ export async function getPatient(apiBaseUrl: string, patientId: number, token: s
 
 
 
-export async function createPatient(apiBaseUrl: string, token: string, patientPayload: any, logFn?: (entry: ApiLogEntry) => void, extraHeaders?: Record<string, string>) {
+export async function createPatient(apiBaseUrl: string, token: string, patientPayload: any, logFn?: (entry: ApiLogEntry) => void, extraHeaders?: Record<string, string>, isAnesthesiaBilling = false) {
 	const base = String(apiBaseUrl).replace(/\/$/, '');
 	const url = `${base}/api/PatientData/Gemini/CreatePatient/2030`;
-	const template = loadCreatePatientTemplate();
+	const template = loadCreatePatientTemplate(isAnesthesiaBilling);
 	const payload = JSON.parse(JSON.stringify(template));
 	applyPatientDataToCreatePayload(payload, patientPayload);
 	// default headers mimic a JSON API; allow caller to provide extra headers to mimic the UI
@@ -611,6 +623,21 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 			feeSchedulesList = [];
 		}
 	}
+	// Anes Billing: resolve the place of service from the org's external facilities (first one)
+	let placeOfService: { id: number; value: string } | undefined;
+	if (opts.isAnesthesiaBilling && opts.facilityId) {
+		try {
+			const ef: any = await getExternalFacilities(token, apiBaseUrl, Number(opts.facilityId), opts.extraHeaders);
+			const list: any[] = Array.isArray(ef) ? ef : (ef?.result || ef?.data || ef?.items || []);
+			// each item: { extOrganizationId, extFacilityName, activeTf, ... }; prefer the first active facility
+			const first = Array.isArray(list) ? (list.find((f: any) => f && f.activeTf !== false) ?? list[0]) : undefined;
+			if (first && typeof first.extOrganizationId === 'number' && typeof first.extFacilityName === 'string' && first.extFacilityName) {
+				placeOfService = { id: first.extOrganizationId, value: first.extFacilityName };
+			}
+		} catch (e) {
+			placeOfService = undefined; // keep template values
+		}
+	}
 	const pickAutoName = isAutoMode ? createAutoNameFactory() : null;
 	const outcomes: Array<CreateBasicPatientResult | undefined> = new Array(total);
 	let lastPatientId: number | null = null;
@@ -661,7 +688,7 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 									return;
 								}
 								// call CreatePatient and capture request+response
-								const created = await createPatient(apiBaseUrl, token, full, logFn, opts.extraHeaders);
+								const created = await createPatient(apiBaseUrl, token, full, logFn, opts.extraHeaders, !!opts.isAnesthesiaBilling);
 						// Log CreatePatient API response (or fallback object)
 						try { /* CreatePatient response captured in outcomes */ } catch (e) {}
 						outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created } as any;
@@ -787,6 +814,8 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 								physicianIdOverride: (patientSource && (patientSource.primaryPhysicianId || patientSource.primaryPhysicianId === 0)) ? (patientSource.primaryPhysicianId as number) : (opts.physicianIdOverride === undefined ? undefined : (opts as any).physicianIdOverride),
 								physicianNameOverride: (patientSource && patientSource.primaryPhysician) ? (patientSource.primaryPhysician as string) : ((opts as any).physicianNameOverride === undefined ? undefined : (opts as any).physicianNameOverride),
 								feeScheduleOverride: (opts as any).feeScheduleOverride ?? autoFeeSchedule,
+								isAnesthesiaBilling: !!opts.isAnesthesiaBilling,
+								placeOfService,
 								dos: opts.dos,
 								logFn,
 								insuranceInsertResponse: insertInsuranceResponse,

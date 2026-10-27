@@ -54,6 +54,19 @@
       .is-flex{display:flex !important}
       button{background:var(--primary);color:#fff;border:none;padding:10px 16px;border-radius:10px;font-weight:600;cursor:pointer}
       button.secondary{background:transparent;border:1px solid rgba(15,23,42,0.06);color:#111827;padding:10px 14px}
+      button.is-loading{position:relative;cursor:progress;opacity:.85;padding-left:38px}
+      button.is-loading::before{content:"";position:absolute;left:14px;top:50%;width:14px;height:14px;margin-top:-7px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:btn-spin .7s linear infinite}
+      @keyframes btn-spin{to{transform:rotate(360deg)}}
+      .toast-host{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:1000;display:flex;flex-direction:column;gap:10px;width:min(460px,calc(100vw - 32px));pointer-events:none}
+      .toast-host .toast{pointer-events:auto}
+      .toast{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:10px;background:#fff;color:#0f172a;font-size:14px;box-shadow:0 8px 24px rgba(15,23,42,.18);border-left:4px solid var(--primary);word-break:break-word}
+      .toast-success{border-left-color:#16a34a}
+      .toast-error{border-left-color:#dc2626}
+      .toast span{flex:1}
+      .toast .toast-close{background:transparent;color:var(--muted);padding:0 4px;font-size:18px;line-height:1;border-radius:6px}
+      .logout-btn{margin-left:auto;display:inline-flex;align-items:center;gap:8px}
+      .logout-btn:hover{background:#244c94}
+      .case-flag-visibility-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
       .hint{font-size:13px;color:var(--muted);margin-top:8px}
       /* Flow depth highlight label styles */
       .flow-label{font-size:13px;font-weight:600;padding:6px 12px;border-radius:10px;display:inline-block;background:#f8fafc;color:#475569;border:1px solid #e2e8f0;letter-spacing:.25px;transition:border-color .3s,color .3s,background .3s}
@@ -85,12 +98,17 @@
     </style>
   </head>
   <body>
+    <div id="toastHost" class="toast-host" aria-live="polite"></div>
     <div class="header">
       <div class="logo">⚡</div>
       <div class="title">
         <h1><span class="brand">Ignition</span></h1>
         <p class="muted">Data Seeder Interface</p>
       </div>
+      <button id="logoutBtn" class="logout-btn is-hidden" title="Logout" aria-label="Logout">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span>Logout</span>
+      </button>
     </div>
 
     <div id="authView" class="auth-view">
@@ -117,6 +135,14 @@
                     <label>Target API URL</label>
                     <!-- https://sisenterprise-api-324476e2-centralindia.siscompletedev.cloud/324476e2t1 -->
                     <input id="apiUrl" type="url" value="https://cypressdevapi.amkaicloud.com/cypressdev" placeholder="https://cypressdevapi.amkaicloud.com/cypressdev" />
+                  </div>
+                  <div class="field">
+                    <label for="orgType">Organization Type</label>
+                    <select id="orgType">
+                      <option value="">Auto-detect</option>
+                      <option value="clinical">Clinical</option>
+                      <option value="anesthesia">Anesthesia Billing</option>
+                    </select>
                   </div>
                   <div class="field">
                     <label>Username</label>
@@ -154,6 +180,7 @@
           <button class="side-nav-btn active" type="button" data-view="caseCreation">Case Creation</button>
           <button class="side-nav-btn" type="button" data-view="contracts">Contracts</button>
           <button class="side-nav-btn" type="button" data-view="transactions">Transaction Codes</button>
+          <button class="side-nav-btn" type="button" data-view="caseFlags">Case Flags</button>
         </nav>
       </aside>
 
@@ -516,6 +543,73 @@
             <div class="actions">
               <button id="transactionsSendBtn">Run</button>
               <span id="transactionsStatus" class="muted" style="margin-left:12px"></span>
+            </div>
+          </div>
+        </section>
+
+        <section id="caseFlagsView" class="view-panel" style="display:none">
+          <div class="view-header">
+            <div>
+              <h2>Case Flags</h2>
+              <p class="muted">Create case flags.</p>
+            </div>
+            <label class="field compact-field">Mode
+              <select id="caseFlagsMode">
+                <option value="manual">Manual</option>
+                <option value="auto" selected>Auto</option>
+              </select>
+            </label>
+          </div>
+          <div class="card">
+            <div id="caseFlagsAutoPanel">
+              <div class="grid">
+                <div class="field">
+                  <label>Number of Case Flags</label>
+                  <input id="caseFlagsAutoCount" type="number" min="1" value="1" />
+                </div>
+              </div>
+            </div>
+            <div id="caseFlagsManualPanel" class="is-hidden">
+              <div class="grid">
+                <div class="field">
+                  <label>Number of Case Flags</label>
+                  <input id="caseFlagsManualCount" type="number" min="1" value="1" />
+                </div>
+                <div class="field">
+                  <label>Flag Name</label>
+                  <input id="caseFlagName" type="text" placeholder="Flag name..." />
+                </div>
+                <div class="field">
+                  <label>Abbreviation</label>
+                  <input id="caseFlagAbbreviation" type="text" maxlength="2" style="text-transform:uppercase" placeholder="AB" />
+                </div>
+                <div class="field">
+                  <label>Color</label>
+                  <select id="caseFlagColor">
+                    <option value="Red" selected>Red</option>
+                    <option value="Orange">Orange</option>
+                    <option value="Yellow">Yellow</option>
+                    <option value="Green">Green</option>
+                    <option value="Blue">Blue</option>
+                    <option value="Purple">Purple</option>
+                    <option value="Pink">Pink</option>
+                    <option value="Black">Black</option>
+                    <option value="Gray">Gray</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Flag Visibility</label>
+                  <div id="caseFlagVisibilityGroup" style="display:flex;gap:8px">
+                    <button type="button" class="secondary case-flag-visibility-btn" data-value="Business">Business</button>
+                    <button type="button" class="secondary case-flag-visibility-btn active" data-value="Clinical">Clinical</button>
+                    <button type="button" class="secondary case-flag-visibility-btn" data-value="Both">Both</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="actions">
+              <button id="caseFlagsSendBtn">Run</button>
+              <span id="caseFlagsStatus" class="muted" style="margin-left:12px"></span>
             </div>
           </div>
         </section>

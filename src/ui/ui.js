@@ -10,11 +10,13 @@
   const caseCreationView = $('caseCreationView');
   const contractsView = $('contractsView');
   const transactionsView = $('transactionsView');
+  const caseFlagsView = $('caseFlagsView');
   const facilityId = $('facilityId');
   const apiUrl = $('apiUrl');
   const username = $('username');
   const password = $('password');
   const loginBtn = $('loginBtn');
+  const logoutBtn = $('logoutBtn');
   const loginCard = $('loginCard');
   const loginCardBody = $('loginCardBody');
   const loginCollapseBtn = $('loginCollapseBtn');
@@ -77,6 +79,17 @@
   const transactionCodeToCredit = $('transactionCodeToCredit');
   const transactionsSendBtn = $('transactionsSendBtn');
   const transactionsStatus = $('transactionsStatus');
+  const caseFlagsMode = $('caseFlagsMode');
+  const caseFlagsAutoPanel = $('caseFlagsAutoPanel');
+  const caseFlagsManualPanel = $('caseFlagsManualPanel');
+  const caseFlagsAutoCount = $('caseFlagsAutoCount');
+  const caseFlagsManualCount = $('caseFlagsManualCount');
+  const caseFlagName = $('caseFlagName');
+  const caseFlagAbbreviation = $('caseFlagAbbreviation');
+  const caseFlagColor = $('caseFlagColor');
+  const caseFlagVisibilityGroup = $('caseFlagVisibilityGroup');
+  const caseFlagsSendBtn = $('caseFlagsSendBtn');
+  const caseFlagsStatus = $('caseFlagsStatus');
   const logEl = document.getElementById('logCard');
   const logTableBody = document.getElementById('logTableBody');
   const logFilter = document.getElementById('logFilter');
@@ -138,10 +151,11 @@
 
   function setActiveView(viewName){
     if (!isAuthenticated) return;
-    const nextView = viewName === 'contracts' ? 'contracts' : (viewName === 'transactions' ? 'transactions' : 'caseCreation');
+    const nextView = ['contracts', 'transactions', 'caseFlags'].includes(viewName) ? viewName : 'caseCreation';
     setVisibility(caseCreationView, nextView === 'caseCreation', 'block');
     setVisibility(contractsView, nextView === 'contracts', 'block');
     setVisibility(transactionsView, nextView === 'transactions', 'block');
+    setVisibility(caseFlagsView, nextView === 'caseFlags', 'block');
     document.querySelectorAll('.side-nav-btn').forEach(btn => {
       const isActive = btn.getAttribute('data-view') === nextView;
       btn.classList.toggle('active', isActive);
@@ -176,6 +190,27 @@
   }
   syncTransactionsModePanels();
   if (transactionsMode) transactionsMode.addEventListener('change', syncTransactionsModePanels);
+  function syncCaseFlagsModePanels(){
+    const current = caseFlagsMode ? caseFlagsMode.value : 'auto';
+    setVisibility(caseFlagsAutoPanel, current === 'auto', 'block');
+    setVisibility(caseFlagsManualPanel, current === 'manual', 'block');
+  }
+  syncCaseFlagsModePanels();
+  if (caseFlagsMode) caseFlagsMode.addEventListener('change', syncCaseFlagsModePanels);
+  if (caseFlagAbbreviation) {
+    caseFlagAbbreviation.addEventListener('input', () => {
+      caseFlagAbbreviation.value = caseFlagAbbreviation.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
+    });
+  }
+  let caseFlagVisibility = 'Clinical';
+  if (caseFlagVisibilityGroup) {
+    caseFlagVisibilityGroup.querySelectorAll('.case-flag-visibility-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        caseFlagVisibility = btn.getAttribute('data-value');
+        caseFlagVisibilityGroup.querySelectorAll('.case-flag-visibility-btn').forEach(b => b.classList.toggle('active', b === btn));
+      });
+    });
+  }
   try { if (count) count.readOnly = false; } catch (e) {}
 
   function initFlowDepthControls(inputEl, labelEl, stepsEl){
@@ -416,7 +451,22 @@
     return { runId, ok: false, finished: false };
   }
 
-  async function executeSeedRun({ payload, progressCtrl, totalCount }) {
+  // Shows a rotating spinner on the Run buttons (and disables them) while a seed run is in flight
+  async function executeSeedRun(args) {
+    const buttons = [runBtn, autoRunBtn].filter(Boolean);
+    buttons.forEach((b) => { b.classList.add('is-loading'); b.disabled = true; });
+    try {
+      const resp = await executeSeedRunInner(args);
+      notifySeedResult(resp, Number(args && args.totalCount) || undefined);
+      return resp;
+    } catch (e) {
+      showToast('error', 'Run failed: ' + (e && e.message ? e.message : String(e)));
+    } finally {
+      buttons.forEach((b) => { b.classList.remove('is-loading'); b.disabled = false; });
+    }
+  }
+
+  async function executeSeedRunInner({ payload, progressCtrl, totalCount }) {
     const ctrl = progressCtrl || progressControllers.manual;
     const targetTotal = Number(totalCount) || Number(payload?.opts?.count) || 1;
     try { if (logoEl) logoEl.classList.add('running'); } catch (e) {}
@@ -499,6 +549,9 @@
             pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
           } catch (e) { /* ignore per-log parse error */ }
         });
+        if (finalResp.ok === false && finalResp.error) {
+          pushLogEntry({ time: formatTime(new Date().toISOString()), method: '-', url: 'Seed run', status: 'error', duration: '', error: finalResp.error });
+        }
         let failureCount = 0;
         try {
           const total = targetTotal || (finalResp.logs.length || 1);
@@ -542,6 +595,49 @@
       }
     } catch (e) {
       if (ctrl) ctrl.setStatus('fail', ctrl.getPercent());
+    }
+    return finalResp;
+  }
+
+  // Toast notifications -------------------------------------------------
+  function showToast(type, message, ms) {
+    try {
+      const host = document.getElementById('toastHost');
+      if (!host) return;
+      const t = document.createElement('div');
+      t.className = 'toast toast-' + type;
+      t.setAttribute('role', 'status');
+      const msg = document.createElement('span');
+      msg.textContent = message;
+      const x = document.createElement('button');
+      x.className = 'toast-close';
+      x.setAttribute('aria-label', 'Dismiss');
+      x.textContent = '×';
+      const close = () => { try { t.remove(); } catch (e) {} };
+      x.addEventListener('click', close);
+      t.appendChild(msg);
+      t.appendChild(x);
+      host.appendChild(t);
+      setTimeout(close, ms || (type === 'error' ? 10000 : 6000));
+    } catch (e) {}
+  }
+
+  // Summarise a /seed response into a toast
+  function notifySeedResult(resp, requestedCount) {
+    if (!resp) { showToast('error', 'Run failed: no response from server.'); return; }
+    const results = (resp.result && Array.isArray(resp.result.results)) ? resp.result.results : [];
+    const failed = results.filter((o) => !o || o.error || (o.caseSummaryResponse && o.caseSummaryResponse.error));
+    const created = results.length - failed.length;
+    const firstError = (failed.map((o) => o && (o.error || (o.caseSummaryResponse && o.caseSummaryResponse.error))).find(Boolean))
+      || (resp.result && resp.result.error) || resp.error;
+    const errText = firstError ? (typeof firstError === 'string' ? firstError : JSON.stringify(firstError)) : '';
+    if (resp.ok && failed.length === 0) {
+      const n = results.length || requestedCount || 0;
+      showToast('success', `${n} case${n === 1 ? '' : 's'} created successfully.`);
+    } else if (created > 0) {
+      showToast('error', `${created} case${created === 1 ? '' : 's'} created, ${failed.length} failed.${errText ? ' ' + errText : ''}`);
+    } else {
+      showToast('error', `Run failed.${errText ? ' ' + errText : ' Check the Output Log for details.'}`);
     }
   }
 
@@ -918,11 +1014,12 @@
     // Clear previous logs on each login attempt
     logBuffer.splice(0, logBuffer.length);
     renderTable();
-    const res = await fetch('/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: username.value, password: password.value, facilityId: Number(facilityId.value), apiUrl: apiUrl.value }) });
+    const res = await fetch('/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: username.value, password: password.value, facilityId: Number(facilityId.value), apiUrl: apiUrl.value, orgType: ($('orgType') || {}).value || '' }) });
     const j = await res.json();
     if (j && j.ok && j.token) {
       token = j.token;
       isAuthenticated = true;
+      if (logoutBtn) { logoutBtn.classList.remove('is-hidden'); }
       // Auto-collapse body, keep header visible
       try {
         if (loginCardBody) {
@@ -1133,7 +1230,17 @@
     }
   });
 
-  // logout removed — token is kept in-memory until page reload
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      try {
+        await fetch('/logout', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ token }) });
+      } catch (e) { /* ignore network errors; still clear local session */ }
+      token = null;
+      isAuthenticated = false;
+      // Reload to reset all in-memory UI state and return to the login screen
+      location.reload();
+    });
+  }
 
   if (autoRunBtn) {
     autoRunBtn.addEventListener('click', async () => {
@@ -1253,6 +1360,55 @@
         if (transactionsStatus) transactionsStatus.textContent = 'Failed: network error';
       } finally {
         transactionsSendBtn.disabled = false;
+      }
+    });
+  }
+
+  if (caseFlagsSendBtn) {
+    caseFlagsSendBtn.addEventListener('click', async () => {
+      const isManual = caseFlagsMode && caseFlagsMode.value === 'manual';
+      const payload = {
+        opts: isManual ? {
+          apiUrl: apiUrl.value,
+          facilityId: Number(facilityId.value),
+          count: Number(caseFlagsManualCount && caseFlagsManualCount.value ? caseFlagsManualCount.value : 1) || 1,
+          flagName: caseFlagName ? caseFlagName.value : undefined,
+          abbreviation: caseFlagAbbreviation ? caseFlagAbbreviation.value : undefined,
+          color: caseFlagColor ? caseFlagColor.value : undefined,
+          visibility: caseFlagVisibility
+        } : {
+          apiUrl: apiUrl.value,
+          facilityId: Number(facilityId.value),
+          count: Number(caseFlagsAutoCount && caseFlagsAutoCount.value ? caseFlagsAutoCount.value : 1) || 1
+        }
+      };
+      caseFlagsSendBtn.disabled = true;
+      if (caseFlagsStatus) caseFlagsStatus.textContent = 'Sending...';
+      try {
+        const res = await fetch('/case-flags', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
+        const j = await res.json();
+        if (j && Array.isArray(j.logs)) {
+          j.logs.forEach(l => {
+            const when = formatTime(l.startTime || l.timestamp);
+            const status = l.status || (l.error ? 'error' : 'unknown');
+            const dur = Number(l.durationMs || 0);
+            const dsec = (dur/1000).toFixed(2) + 's';
+            pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
+          });
+          renderTable();
+        }
+        if (caseFlagsStatus) {
+          const total = payload.opts.count;
+          const successCount = (j && typeof j.successCount === 'number') ? j.successCount : undefined;
+          const failureCount = (j && typeof j.failureCount === 'number') ? j.failureCount : undefined;
+          caseFlagsStatus.textContent = (successCount !== undefined)
+            ? `Created ${successCount}/${total}${failureCount ? ` (${failureCount} failed)` : ''}`
+            : (j && j.error ? `Failed: ${j.error}` : 'Done');
+        }
+      } catch (e) {
+        if (caseFlagsStatus) caseFlagsStatus.textContent = 'Failed: network error';
+      } finally {
+        caseFlagsSendBtn.disabled = false;
       }
     });
   }
@@ -1404,6 +1560,11 @@
         , flowDepth: flowDepth ? Number(flowDepth.value) : 3
       }
     };
+    if (payload.opts.insuranceType === 'create' && !String(payload.opts.suffix || '').trim()) {
+      alert('Suffix is required when creating insurance.');
+      if (suffix) suffix.focus();
+      return;
+    }
     await executeSeedRun({
       payload,
       progressCtrl: progressControllers.manual,

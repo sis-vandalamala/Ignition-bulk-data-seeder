@@ -12,13 +12,25 @@ const templatePath = path.join(__dirname, '..', 'reqTemplates', 'caseSummary.req
 const caseGuarantorTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'caseGuarantor.json');
 const caseInsurancesTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'caseInsurances.json');
 
+const anesBillingTemplatePath = path.join(__dirname, '..', 'reqTemplates', 'caseSummary.anesBilling.req.json');
+
 let cachedTemplate: ICaseSummary | null = null;
+let cachedAnesBillingTemplate: ICaseSummary | null = null;
 let cachedCaseGuarantorTemplate: any | null = null;
 let cachedCaseInsurancesTemplate: any | null = null;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function loadCaseSummaryTemplate(): ICaseSummary {
+function loadCaseSummaryTemplate(isAnesthesiaBilling = false): ICaseSummary {
+	if (isAnesthesiaBilling) {
+		if (cachedAnesBillingTemplate) return cachedAnesBillingTemplate;
+		try {
+			cachedAnesBillingTemplate = JSON.parse(fs.readFileSync(anesBillingTemplatePath, 'utf8')) as ICaseSummary;
+			return cachedAnesBillingTemplate;
+		} catch (err) {
+			throw new Error(`Failed to load anesthesia billing case summary template: ${err}`);
+		}
+	}
 	if (cachedTemplate) return cachedTemplate;
 	try {
 		const raw = fs.readFileSync(templatePath, 'utf8');
@@ -218,10 +230,19 @@ function applyInsuranceMapping(payload: ICaseSummary, opts?: InsuranceMappingOpt
 
 	try {
 		const insArr = Array.isArray(insTemplate.caseInsurances) ? insTemplate.caseInsurances : [];
+		// The template only carries a full patientInsurance in slot 0 (secondary/tertiary are empty objects).
+		// Snapshot it so secondary/tertiary slots can be built from the same complete structure.
+		const baseInsurance = insArr[0] && insArr[0].patientInsurance && Object.keys(insArr[0].patientInsurance).length
+			? JSON.parse(JSON.stringify(insArr[0].patientInsurance))
+			: undefined;
 		// ensure we have at least as many slots as responses (template already has 3)
 		for (let i = 0; i < insertList.length && i < insArr.length; i += 1) {
 			const slot = insArr[i];
-			if (!slot || !slot.patientInsurance) continue;
+			if (!slot) continue;
+			if (!slot.patientInsurance) slot.patientInsurance = {};
+			if (i > 0 && baseInsurance && Object.keys(slot.patientInsurance).length === 0) {
+				slot.patientInsurance = JSON.parse(JSON.stringify(baseInsurance));
+			}
 			const pi = slot.patientInsurance as any;
 			const src = insertList[i] as any;
 			if (hasField(src, 'patientInsuranceId')) pi.patientInsuranceId = src.patientInsuranceId;
@@ -321,6 +342,8 @@ export type CreateCaseSummaryOptions = {
 	insurancePlanResponses?: any[];
 	facilityIdOverride?: number;
 	insuranceType?: string;
+	placeOfService?: { id: number; value: string }; // Anes Billing only; overrides template placeOfServiceId/Value
+	isAnesthesiaBilling?: boolean; // use the Anes Billing payload variant (entityType 2); clinical otherwise
 };
 
 const mergeArraysPreferSource = (_target: any[], source: any[]) => {
@@ -351,15 +374,21 @@ export async function createCaseSummary({
 	insurancePlanResponses,
 	facilityIdOverride,
 	insuranceType,
+	isAnesthesiaBilling = false,
+	placeOfService,
 }: CreateCaseSummaryOptions) {
 	if (!apiBaseUrl) throw new Error('apiBaseUrl is required');
 	if (!token) throw new Error('token is required');
 	const base = String(apiBaseUrl).replace(/\/$/, '');
-	const template = loadCaseSummaryTemplate();
+	const template = loadCaseSummaryTemplate(isAnesthesiaBilling);
 	const payload: ICaseSummary = caseSummary
 		? merge<ICaseSummary>(template, caseSummary, { arrayMerge: mergeArraysPreferSource })
 		: JSON.parse(JSON.stringify(template));
 	applyCreatePatientResponse(payload, patientResponse);
+	if (isAnesthesiaBilling && placeOfService) {
+		(payload as any).placeOfServiceId = placeOfService.id;
+		(payload as any).placeOfServiceValue = placeOfService.value;
+	}
 	applyInsuranceMapping(payload, { insuranceInsertResponse, insuranceInsertResponses, insurancePlanResponse, insurancePlanResponses, facilityIdOverride, insuranceType });
 	// apply room id/name overrides
 	if (roomIdOverride !== undefined) payload.roomId = roomIdOverride;
@@ -529,6 +558,21 @@ export async function createCaseSummary({
 				sourceIdentifier: fsItem.sourceIdentifier ?? '00000000-0000-0000-0000-000000000000',
 				procedureDisplayName: fsItem.procedureDisplayName ?? `${fsItem.cptProcedure?.cptCode ?? ''}; ${fsItem.procedure}`.trim(),
 			};
+			if (isAnesthesiaBilling) {
+				// Anes Billing fee schedule items carry mapped anesthesia / revenue fields; keep what the API returned
+				const src: any = fsItem;
+				const item: any = updated.feeScheduleItem;
+				['mappedAnesthesiaProcedure', 'mappedAnesthesiaCptProcedureId', 'mappedRevenueCodeId', 'mappedTypeOfBill', 'followUpDays', 'synchronizationId'].forEach((k) => {
+					if (src[k] !== undefined) item[k] = src[k];
+				});
+				// Match the payload the Anes Billing UI sends: descriptions/amount come straight from the fee schedule item
+				// (null when absent) and the procedure carries no top-level fee schedule history/root ids.
+				updated.modifiedProcedureDescription = src.modifiedProcedureDescription ?? null;
+				item.modifiedProcedureDescription = src.modifiedProcedureDescription ?? null;
+				item.amount = src.amount ?? null;
+				delete updated.feeScheduleHistoryId;
+				delete updated.feeScheduleRootId;
+			}
 			return updated;
 		});
 		payload.caseProcedures = procedures;
@@ -543,7 +587,7 @@ export async function createCaseSummary({
 		payload.caseProcedures = payload.caseProcedures.map((p: any, idx: number) => {
 			const proc = { ...p };
 			// sequence always index
-			proc.procedureSequence = idx;
+			if (!isAnesthesiaBilling) proc.procedureSequence = idx; // Anes Billing UI payload has no procedureSequence
 			// set primaryProcedureTf only if requested and first
 			proc.primaryProcedureTf = primaryFirst && idx === 0 ? true : false;
 			if (opts.editableAll) proc.isEditable = true;
@@ -563,6 +607,7 @@ export async function createCaseSummary({
 			return proc;
 		});
 	}
+	if (isAnesthesiaBilling) delete (payload as any).primaryPhysician; // not part of the Anes Billing UI payload
 	const url = `${base}${CASE_SUMMARY_ENDPOINT}`;
 	const attemptRequest = async () => postJson(url, payload, timeoutMs, buildHeaders(token), logFn);
 	let lastErr: any = null;

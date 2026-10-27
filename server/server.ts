@@ -33,18 +33,19 @@ app.use((req, _res, next) => {
 app.use('/ui', express.static(path.join(__dirname, '..', 'src', 'ui')));
 
 app.post('/login', async (req, res) => {
-	const { username, password, facilityId, apiUrl } = req.body || {};
+	const { username, password, facilityId, apiUrl, orgType } = req.body || {};
 	try {
 		// ensure a fresh place to collect logs for this login request (clear previous)
 		(req.app.locals as any).apiLogs = [];
 		const instanceLogs = (req.app.locals as any).apiLogs;
 		const logger = (entry: any) => { try { instanceLogs.push(entry); } catch (e) {} };
 
-		const out = await loginUser(apiUrl, username, password, facilityId, logger);
+		const out = await loginUser(apiUrl, username, password, facilityId, logger, orgType);
 		// if login returned a token, store it on the server app locals so server-side calls can reuse it
 		if (out && out.ok && out.token) {
 			(req.app.locals as any).token = out.token;
 			(req.app.locals as any).orgId = out.orgId;
+			(req.app.locals as any).isAnesthesiaBilling = !!(out as any).isAnesthesiaBilling;
 		}
 		// include any recorded logs from login in the response
 		res.json(Object.assign({}, out, { logs: instanceLogs }));
@@ -145,6 +146,7 @@ app.post('/seed', (req, res) => {
 								const svcRes = await createBasicPatients({
 					apiBaseUrl: opts.apiUrl || opts.url,
 					token,
+					isAnesthesiaBilling: !!(req.app.locals as any).isAnesthesiaBilling,
 					suffix: opts.suffix,
 					count: Number(opts.count) || 1,
 					concurrency: opts.concurrency,
@@ -162,7 +164,8 @@ app.post('/seed', (req, res) => {
 					logFn: logger,
 					extraHeaders,
 					username: opts.username,
-					flowDepth: typeof opts.flowDepth === 'number' ? opts.flowDepth : inferredFlowDepth,
+					// Anes Billing: only case creation is supported for now (skip discharge / coding / charge entry)
+					flowDepth: (req.app.locals as any).isAnesthesiaBilling ? 0 : (typeof opts.flowDepth === 'number' ? opts.flowDepth : inferredFlowDepth),
 					mode: opts.mode,
 					periodBatchMode: opts.mode === 'auto' ? 'auto' : (opts.periodBatch as 'select' | 'create' | undefined),
 					selectedPeriodId: typeof opts.periodId !== 'undefined' ? Number(opts.periodId) : undefined,
@@ -185,6 +188,8 @@ app.post('/seed', (req, res) => {
 			}
 
 			return res.json({ ok: true, message: 'seed run finished (stub)', tokenPresent: !!token, logs });
+		} catch (e: any) {
+			return res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e), logs });
 		} finally {
 			setGlobalApiLogger(undefined);
 		}

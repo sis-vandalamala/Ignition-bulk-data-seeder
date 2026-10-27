@@ -152,6 +152,19 @@ export async function getInsuranceCarriers(token: string, apiBaseUrl?: string, e
     }
 }
 
+// Anesthesia Billing orgs: external facilities are used as the case place of service
+export async function getExternalFacilities(token: string, apiBaseUrl: string | undefined, orgId: number, extraHeaders?: Record<string,string>) {
+    if (!apiBaseUrl) throw new Error('apiBaseUrl is required for getExternalFacilities');
+    const base = String(apiBaseUrl).replace(/\/+$/, '');
+    const url = `${base}/api/AnesthesiaBillingConfiguration/Get/ExternalFacilities/List/${orgId}/false`;
+    const headers: Record<string,string> = Object.assign({
+        Accept: 'application/json',
+        token,
+        Referer: base + '/',
+    }, extraHeaders || {});
+    return getJson(url, 15000, headers as any);
+}
+
 export async function getGeneralLedgerAccounts(token: string, apiBaseUrl?: string, extraHeaders?: Record<string,string>) {
     if (!apiBaseUrl) throw new Error('apiBaseUrl is required for getGeneralLedgerAccounts');
     const base = String(apiBaseUrl).replace(/\/+$/, '');
