@@ -250,21 +250,43 @@ The Auto Mode interface consists of:
 - **Run Configuration** — After login, configure:
   - **Number of Cases** — How many patient records to seed in this run (e.g. 5).
   - **Concurrency** — Number of parallel API call workers (e.g. 4).
-  - **Workflow Action** — Select the target tracker from the dropdown (e.g. "Financial Clearance Tracker"). This determines how deep the pipeline runs (see [Action Mapping](#auto-mode-action-mapping) below).
-- **Run** — Click the **Run** button to start seeding. A progress bar shows real-time completion status, and the **Output Log** at the bottom displays total elapsed time and any error-status API calls for debugging.
+  - **Target Tracker** — Select the tracker the cases should land in (e.g. "Financial Clearance Tracker"). This determines how deep the pipeline runs and whether insurance is attached (see [Tracker Mapping](#auto-mode-tracker-mapping) below).
+- **Run** — Click the **Run** button to start seeding. The **Run Progress** card updates live (polled from `/seed/status`): completed / passed / failed / in-progress counts, how many cases are in each stage right now, run warnings, and a **Failed cases** table with the stage each case failed at and the full API error (HTTP status, endpoint, response body and the room / appointment type / physician / CPT values sent). The **Output Log** shows every error-status API call with its error text.
 
-#### Auto Mode Action Mapping
+#### Auto Mode Tracker Mapping
 
-| UI Action | Server Action | Flow Depth |
-|-----------|--------------|------------|
-| Financial Clearance | `createBasicPatients` | 0 — Create cases only |
-| Cases to Code | `dischargeCases` | 1 — Create + Discharge |
-| Charge Entry | `casesToCode` | 2 — Create + Discharge + Code |
-| Balance / Reconciliation | `chargeEntry` | 3 — Full pipeline |
-| Inventory Reconciliation | `dischargeCases` | 1 — Create + Discharge |
-| Revenue Cycle Management | `chargeEntry` | 3 — Full pipeline |
-| Insurance Billing | `chargeEntry` | 3 — Full pipeline |
-| Patient Statements | `patientStatementsTracker` | 3 — Full pipeline (no auto insurance) |
+| Target Tracker | Server Action | Flow | Insurance |
+|----------------|---------------|------|-----------|
+| Financial Clearance | `financialClearance` | 0 — Create case | Created |
+| Cases to Code | `casesToCodeTracker` | 1 — Create + Discharge (status Performed) | Created |
+| Charge Entry | `chargeEntryTracker` | 2 — Create + Discharge + Code (status Ready to Charge) | Created |
+| Insurance Billing | `insuranceBilling` | 3 — Full pipeline (status Ready for Bill) | Created |
+| Patient Statements | `patientStatements` | 3 — Full pipeline | None (self-pay) |
+| Balance / Reconciliation | `balanceReconciliation` | 3 — Full pipeline | Created |
+| Remittance Posting | — | Not supported yet (needs claim generation + remittance posting flows) | — |
+
+Legacy action names (`createBasicPatients`, `dischargeCases`, `casesToCode`, `chargeEntry`, `patientStatementsTracker`) are still accepted. In manual mode the Workflow slider shows which tracker the selected depth lands in.
+
+#### Anesthesia Billing orgs
+
+When the logged-in org is an Anesthesia Billing entity, the Target Tracker list switches to the Anes Billing desktop trackers:
+
+| Target Tracker | Server Action | Flow |
+|----------------|---------------|------|
+| Financial Clearance | `financialClearance` | Create case (status Scheduled) |
+| Coding/Charge Entry | `anesCodingChargeEntry` | Create → Verification Complete (`AnesthesiaBilling/InsuranceTracker/SaveBulkInsuranceVerification`) → Clinical Documentation (`POST CDMDocument/{caseId}`, status Performed, anesthesia/operative times) |
+| Insurance Billing / Patient Statements / Balance/Reconciliation / Remittance Posting | — | Not supported yet (Anes coding/charge entry is not automated) |
+
+- Insured vs self-pay verification is chosen from the case's procedures (`GetCaseInformation.numberOfInsuranceProcedures`).
+- Auto mode only picks fee schedule items mapped to an anesthesia CPT (`mappedAnesthesiaCptCode`); unmapped items cannot be coded.
+- An Anes case passes only when `GetCaseInformation` reports **Performed** after documentation.
+- Manual mode: any Workflow depth ≥ 1 runs verification + documentation (deeper depths are capped, with a warning).
+
+#### Case validation
+
+- Appointment types that cannot create a regular case are skipped in auto mode and hidden from the manual dropdown: no case pack (`casePackId` 0, e.g. "Gem_Business" — `UpsertCaseSummary` rejects it with an empty 400), inactive, or whose case type for the DOS is not "Case" (`caseTypeBeforeStartDate` / `caseTypeAfterStartDate` ≠ 1, e.g. "Test Cases" — the case is created as **Removed**).
+- In manual mode, if no room / appointment type is selected and the template's value does not exist in the logged-in org, the first valid one from the org is used (shown as a warning).
+- A case counts as **passed** only if every stage up to the target tracker succeeded.
 
 ---
 
@@ -309,8 +331,21 @@ The **flow depth** controls how far down the pipeline each patient progresses:
 | `/ui/*` | GET | Serves the browser UI (static files) |
 | `/login` | POST | Authenticates against the Gemini API. Body: `{apiUrl, username, password, facilityId}`. Returns `{ok, token, orgId, logs}` |
 | `/logout` | POST | Clears session token. Body: `{token}` |
-| `/seed` | POST | **Main seeding endpoint.** Body: `{opts: {...}}`. Handles insurance creation, infers flow depth, orchestrates the full pipeline. Returns `{ok, result, insuranceResult, insuranceResults, logs, runElapsedMs}` |
-| `/support-data` | POST | Fetches reference data from the target API. Body: `{apiUrl, facilityId}`. Returns `{rooms, appointmentTypes, physicians, feeSchedule, periods, batches, insurances}` |
+| `/seed` | POST | **Main seeding endpoint.** Body: `{opts: {...}}`. Starts a background run (insurance creation + per-case pipeline) and returns immediately with `{ok, runId, total, targetTracker, warnings}`. Returns 409 while another run is in progress. |
+| `/seed/status` | GET | Live progress for `?runId=…&logsFrom=N`: `{status, finished, total, completed, passed, failed, inProgress, stageCounts, failures[], warnings[], error, elapsedMs, logs (new since logsFrom), logsTotal}`; includes `final` (summary + per-case results) once finished. |
+| `/contracts` | POST | Creates insurance contracts. Body `{opts: {mode, count, contractType, pctBilledCharges, pctAllowed, effectiveDate, expiryDate, notes}}`. Returns `{ok, results[{ok, index, contractName, insuranceContractId, error}], successCount, failureCount, route, logs}` |
+| `/transaction-codes` | POST | Creates transaction codes. Body `{opts: {mode, count, type, toDebit, toCredit}}`. Same response shape. |
+| `/case-flags` | POST | Creates case flag configs for the logged-in org. Body `{opts: {mode, count, flagName, abbreviation, color, visibility}}`. Same response shape. |
+| `/support-data` | POST | Fetches reference data from the target API. Body: `{apiUrl, facilityId}`. Returns `{rooms, appointmentTypes, physicians, feeSchedule, periods, batches, insurances, generalLedgerAccounts, caseFlagColors}` |
+
+### Contracts, Transaction Codes and Case Flags
+
+These follow what the SIS Enterprise configuration pages do:
+
+- **Route selection** — when feature 247 "Business Office Granular Permissions" is on, the `/api/facility/business/...` routes are used; when it is off (they answer 403 "Feature [...] not found") the legacy routes are used: `InsuranceContract/SaveInsuranceContract`, `SaveInsuranceContractPostingOption`, `RecalculateContractReviewListByContractId`, `TransactionCode/UpsertTransactionCode`, `GeneralLedgerAccount/List`.
+- **Contracts** — `contractType` 1 Grouper, 2 Contract Fee Schedule, 3 % of Billed Charges. Fee Schedule / % of Billed get a posting option (adjustment time "At Charge Posting") and a review-list recalculation. Auto mode: % of Billed Charges, random 30–80 %, effective today for one year.
+- **Transaction codes** — saved with `transactionTypeId` (Payment 2, Unassigned Payment 3, Write-Off 4, Correction 5, Debit 6, Transfer 7, Allocation 8) and optional GL accounts. GL dropdowns are empty when the "General Ledger Account Functionality" feature is off.
+- **Case flags** — `POST CaseFlag/Config` under the org configuration lock (`RequestLock {recordLockTypeId: 27, organizationId}`), released afterwards. If another session holds the lock (e.g. the Case Flags page is open in SIS) the run stops with a clear message. Colors come from `CaseFlag/Colors`; visibility Clinical 1 / Business 2 / Both 3.
 
 ---
 

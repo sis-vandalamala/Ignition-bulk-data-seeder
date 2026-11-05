@@ -15,7 +15,7 @@ export async function loginUser(apiUrl: string | undefined, username: string, pa
 		const loginUrl = `${base}/api/Login/LoginUser`;
 		const body = { userName: username, password };
 		const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-		const data = await postJson(loginUrl, body, 10000, headers, logFn);
+		const data = await postJson(loginUrl, body, 30000, headers, logFn);
 		// extract token from common shapes
 		let token: string | undefined = undefined;
 		if (!data) token = undefined;
@@ -39,7 +39,7 @@ export async function loginUser(apiUrl: string | undefined, username: string, pa
 		if (orgId) {
 			try {
 				const sessUrl = `${base}/api/UserSession/UserSessionOrg/${orgId}`;
-				sessionInfo = await postJson(sessUrl, {}, 10000, { token }, logFn);
+				sessionInfo = await postJson(sessUrl, {}, 30000, { token }, logFn);
 			} catch (e: any) {
 				// non-fatal: return login token but include session error
 				return { ok: true, token, orgId, sessionError: e && e.message ? e.message : String(e), isAnesthesiaBilling: false };

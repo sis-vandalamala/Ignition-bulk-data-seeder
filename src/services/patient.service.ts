@@ -2,10 +2,11 @@ import fs from 'fs';
 import path from 'path';
 
 import axios from 'axios';
-import { postJson, getJson, ApiLogEntry } from '../utils/api';
-import createCaseSummary from './caseSummary.service';
+import { postJson, getJson, ApiLogEntry, describeApiError } from '../utils/api';
+import createCaseSummary, { getCaseSummaryTemplateDefaults } from './caseSummary.service';
 import { requestRecordLock, releaseRecordLock, getPeriodBatches, createPeriod, createBatch, getRoomsForOrganization, getAppointmentTypeNameAndID, getFeeSchedules, getExternalFacilities } from './support.service';
 import { runDischargeFlow } from './discharge.service';
+import { verifyAnesthesiaCase, documentAnesthesiaCase, getAnesthesiaCaseStatus } from './anesthesiaBilling.service';
 import codingChargeEntry, { type ChargeEntryPeriodBatch } from './codingChargeEntry.service';
 import { insertInsuranceGemini, createInsertInsurancePayload, type InsuranceInsertOverrides, type CreateInsuranceResult } from './insurance.service';
 import type { IGetDuplicatePatient } from '../models/getDuplicatePatients.interface';
@@ -123,6 +124,27 @@ function pickRandomApptType(apptTypes: any[]): { appointmentTypeId?: number; app
 	const idx = Math.floor(Math.random() * apptTypes.length);
 	const chosen = apptTypes[idx];
 	return { appointmentTypeId: extractApptTypeId(chosen), appointmentTypeName: extractApptTypeName(chosen) };
+}
+
+// An appointment type can only be used for a case when it is active and mapped to a case pack.
+// UpsertCaseSummary rejects a case for an appointment type with casePackId 0 (e.g. "Gem_Business")
+// with an empty 400, which made roughly 1 in N auto-mode cases fail at random.
+export function isUsableAppointmentType(a: any, dos?: string | Date): boolean {
+	if (!a || typeof a !== 'object') return false;
+	if (a.isAppointmentTypeActive === false) return false;
+	if (a.casePackId !== undefined && a.casePackId !== null) {
+		const cp = Number(a.casePackId);
+		if (Number.isNaN(cp) || cp <= 0) return false;
+	}
+	// Each appointment type carries the case type to create before / after its start date (1 = regular case).
+	// Any other value creates a non-case appointment that SIS shows as "Removed" (e.g. "Test Cases": after = 4).
+	const when = dos ? new Date(dos) : new Date();
+	const start = a.startDt ? new Date(a.startDt) : null;
+	const applicable = start && !Number.isNaN(start.getTime()) && !Number.isNaN(when.getTime()) && when >= start
+		? a.caseTypeAfterStartDate
+		: a.caseTypeBeforeStartDate;
+	if (applicable !== undefined && applicable !== null && Number(applicable) !== 1) return false;
+	return true;
 }
 
 function pickRandomFeeSchedule(feeSchedules: any[]): any | undefined {
@@ -501,10 +523,39 @@ export type CreateBasicPatientsOptions = {
 	insuranceCreateResult?: CreateInsuranceResult; // backward-compatible single
 	// Multiple created insurance results (for plans/claim office mapping)
 	insuranceCreateResults?: CreateInsuranceResult[];
+	// Called once per case as soon as it passes or fails (drives live progress)
+	onCaseComplete?: (result: CreateBasicPatientResult, totals: CaseRunTotals) => void;
+	// Called when a case moves to a new stage
+	onCaseStage?: (index: number, stage: CaseStage) => void;
 };
+
+export type CaseStage = 'findPatient' | 'getPatient' | 'recordLock' | 'createPatient' | 'createCase' | 'discharge' | 'casesToCode' | 'chargeEntry' | 'insuranceVerification' | 'clinicalDocumentation';
+
+export const CASE_STAGE_LABELS: Record<CaseStage, string> = {
+	findPatient: 'Find patient (GetDuplicatePatients)',
+	getPatient: 'Load patient (GetPatient)',
+	recordLock: 'Patient record lock',
+	createPatient: 'Save patient (CreatePatient)',
+	createCase: 'Create case (UpsertCaseSummary)',
+	discharge: 'Discharge',
+	casesToCode: 'Cases to Code',
+	chargeEntry: 'Charge Entry',
+	insuranceVerification: 'Insurance verification (Financial Clearance)',
+	clinicalDocumentation: 'Clinical documentation (Performed)',
+};
+
+export type CaseRunTotals = { total: number; completed: number; passed: number; failed: number };
 
 export type CreateBasicPatientResult = {
 	index: number;
+	status: 'passed' | 'failed';
+	failedStage?: CaseStage;
+	failedStageLabel?: string;
+	completedStages: CaseStage[];
+	patientId?: number;
+	patientName?: string;
+	caseSummaryId?: number;
+	warnings?: string[];
 	request: IGetDuplicatePatient;
 	response?: any;
 	fullPatient?: any;
@@ -599,30 +650,82 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 	const insertInsuranceTimeout = typeof opts.insertInsuranceTimeoutMs === 'number' ? opts.insertInsuranceTimeoutMs : 15000;
 
 	const tpl = loadTemplate();
-	// Preload rooms, appointment types, and fee schedules for AUTO MODE
+	const runWarnings: string[] = [];
+	// Reference data for the logged-in org. Rooms and appointment types are loaded in manual mode too,
+	// so template fallbacks (captured in another org) can be validated before any patient is created.
 	let roomsList: any[] = [];
 	let apptTypesList: any[] = [];
 	let feeSchedulesList: any[] = [];
+	try {
+		const rr: any = await getRoomsForOrganization(token, apiBaseUrl);
+		roomsList = Array.isArray(rr) ? rr : (Array.isArray(rr?.rooms) ? rr.rooms : []);
+	} catch (e) {
+		runWarnings.push(`Could not load rooms: ${describeApiError(e)}`);
+	}
+	try {
+		const at: any = await getAppointmentTypeNameAndID(token, apiBaseUrl);
+		apptTypesList = Array.isArray(at) ? at : [];
+	} catch (e) {
+		runWarnings.push(`Could not load appointment types: ${describeApiError(e)}`);
+	}
+	const usableApptTypes = apptTypesList.filter((a) => isUsableAppointmentType(a, opts.dos));
+	const unusableApptTypes = apptTypesList.filter((a) => !isUsableAppointmentType(a, opts.dos));
 	if (isAutoMode) {
-		try {
-			const rr: any = await getRoomsForOrganization(token, apiBaseUrl);
-			roomsList = Array.isArray(rr) ? rr : (Array.isArray(rr?.rooms) ? rr.rooms : []);
-		} catch (e) {
-			roomsList = [];
+		if (unusableApptTypes.length) {
+			runWarnings.push(`Skipping appointment type(s) that cannot create a regular case (no case pack / inactive / non-case type for this DOS): ${unusableApptTypes.map((a) => `${extractApptTypeName(a) ?? '?'} (${extractApptTypeId(a) ?? '?'})`).join(', ')}`);
 		}
 		try {
-			const at: any = await getAppointmentTypeNameAndID(token, apiBaseUrl);
-			apptTypesList = Array.isArray(at) ? at : [];
+			const fsRes: any = await getFeeSchedules(token, apiBaseUrl, opts.extraHeaders);
+			const all = Array.isArray(fsRes) ? fsRes : [];
+			const active = all.filter((f: any) => f && f.activeTf !== false);
+			const forOrg = facilityId ? active.filter((f: any) => f.organizationId === undefined || Number(f.organizationId) === Number(facilityId)) : active;
+			feeSchedulesList = forOrg.length ? forOrg : active;
+			if (opts.isAnesthesiaBilling) {
+				// Anes Billing coding needs a surgical CPT mapped to an anesthesia CPT (mappedAnesthesiaProcedure);
+				// unmapped items (e.g. "Surg2") cannot be added to performed procedures.
+				const mapped = feeSchedulesList.filter((f: any) => f && (f.mappedAnesthesiaCptCode || f.mappedAnesthesiaProcedure || f.mappedAnesthesiaCptProcedureId));
+				if (mapped.length) feeSchedulesList = mapped;
+				else runWarnings.push(`No fee schedule in org ${facilityId ?? '?'} is mapped to an anesthesia CPT — Anes Billing cases cannot be coded/charged.`);
+			}
 		} catch (e) {
-			apptTypesList = [];
+			runWarnings.push(`Could not load fee schedules: ${describeApiError(e)}`);
 		}
-		try {
-			const fs: any = await getFeeSchedules(token, apiBaseUrl, opts.extraHeaders);
-			feeSchedulesList = Array.isArray(fs) ? fs : [];
-		} catch (e) {
-			feeSchedulesList = [];
+		if (!feeSchedulesList.length) runWarnings.push(`No fee schedules returned for org ${facilityId ?? '?'} — cases use the template CPT, which may not exist in this org.`);
+	}
+	const findApptType = (id?: number) => (typeof id === 'number' ? apptTypesList.find((a) => extractApptTypeId(a) === id) : undefined);
+	const findRoom = (id?: number) => (typeof id === 'number' ? roomsList.find((r) => extractRoomId(r) === id) : undefined);
+
+	// Manual mode: resolve room / appointment type once and validate them up front.
+	let manualRoom: { roomId?: number; roomName?: string } = {};
+	let manualAppt: { appointmentTypeId?: number; appointmentTypeName?: string } = {};
+	if (!isAutoMode) {
+		const tplDefaults = getCaseSummaryTemplateDefaults(!!opts.isAnesthesiaBilling);
+		if (typeof opts.roomIdOverride === 'number') {
+			manualRoom = { roomId: opts.roomIdOverride, roomName: opts.roomNameOverride };
+		} else if (roomsList.length && !findRoom(tplDefaults.roomId)) {
+			const r = roomsList.find((x) => x && x.activeTf !== false) ?? roomsList[0];
+			manualRoom = { roomId: extractRoomId(r), roomName: extractRoomName(r) };
+			runWarnings.push(`No room selected and the template room (${tplDefaults.roomId}) is not in this org — using room "${manualRoom.roomName}" (${manualRoom.roomId}).`);
+		}
+		if (typeof opts.appointmentTypeIdOverride === 'number') {
+			const sel = findApptType(opts.appointmentTypeIdOverride);
+			if (sel && !isUsableAppointmentType(sel, opts.dos)) {
+				throw new Error(`Appointment type "${extractApptTypeName(sel) ?? opts.appointmentTypeNameOverride ?? ''}" (${opts.appointmentTypeIdOverride}) cannot create a regular case on this date (no case pack mapped, inactive, or its case type for this DOS is not "Case"); the case would fail or be created as Removed. Choose another appointment type or map a case pack to it in configuration.`);
+			}
+			manualAppt = { appointmentTypeId: opts.appointmentTypeIdOverride, appointmentTypeName: opts.appointmentTypeNameOverride };
+		} else if (usableApptTypes.length) {
+			const tplAppt = findApptType(tplDefaults.appointmentTypeId);
+			if (!tplAppt || !isUsableAppointmentType(tplAppt, opts.dos)) {
+				const a = usableApptTypes[0];
+				manualAppt = { appointmentTypeId: extractApptTypeId(a), appointmentTypeName: extractApptTypeName(a) };
+				runWarnings.push(`No appointment type selected and the template one (${tplDefaults.appointmentTypeId}) is not usable in this org — using "${manualAppt.appointmentTypeName}" (${manualAppt.appointmentTypeId}).`);
+			}
 		}
 	}
+	if (isAutoMode && apptTypesList.length && !usableApptTypes.length) {
+		throw new Error(`None of the org's appointment types has a case pack mapped (${apptTypesList.map((a) => extractApptTypeName(a)).join(', ')}); cases cannot be created.`);
+	}
+
 	// Anes Billing: resolve the place of service from the org's external facilities (first one)
 	let placeOfService: { id: number; value: string } | undefined;
 	if (opts.isAnesthesiaBilling && opts.facilityId) {
@@ -636,11 +739,40 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 			}
 		} catch (e) {
 			placeOfService = undefined; // keep template values
+			runWarnings.push(`Could not load external facilities (place of service): ${describeApiError(e)}`);
 		}
 	}
 	const pickAutoName = isAutoMode ? createAutoNameFactory() : null;
 	const outcomes: Array<CreateBasicPatientResult | undefined> = new Array(total);
 	let lastPatientId: number | null = null;
+	const totals: CaseRunTotals = { total, completed: 0, passed: 0, failed: 0 };
+
+	const primaryInsuranceCarrierId = (() => {
+		try {
+			const plan = Array.isArray(opts.insuranceCreateResults) && opts.insuranceCreateResults.length
+				? opts.insuranceCreateResults[0] && opts.insuranceCreateResults[0].plan
+				: (opts.insuranceCreateResult ? opts.insuranceCreateResult.plan : undefined);
+			const id = plan && (plan.insuranceCarrierId ?? plan.insuranceCarrierObjectId);
+			return typeof id === 'number' ? id : undefined;
+		} catch (e) { return undefined; }
+	})();
+	const toPatientInsurance = (ins: any) => {
+		const pid = ins && (ins.patientInsuranceId ?? ins.PatientInsuranceId);
+		if (typeof pid !== 'number') return undefined;
+		const dn = ins.displayName ?? ((ins.carrier && ins.planName) ? `${ins.carrier}, ${ins.planName}` : undefined);
+		return { patientInsuranceId: pid, displayName: dn };
+	};
+
+	const formatStageError = (stage: CaseStage, err: any) => {
+		let msg = describeApiError(err);
+		const ctx = err && (err as any).caseContext;
+		if (ctx) msg += ` | Case values sent: ${ctx}`;
+		const status = err && err.response ? err.response.status : undefined;
+		if (stage === 'createCase' && status === 400) {
+			msg += ' | Hint: an empty 400 from UpsertCaseSummary usually means one of these IDs is not valid for this org (appointment type without a case pack, or a room / physician / fee schedule from another org).';
+		}
+		return `${CASE_STAGE_LABELS[stage]}: ${msg}`;
+	};
 
 	const makeRequest = async (index: number) => {
 		const autoName = isAutoMode && pickAutoName ? pickAutoName(index) : null;
@@ -649,283 +781,221 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 			firstName: autoName ? autoName.firstName : `InPFname${suffixValue}v${index}`,
 			lastName: autoName ? autoName.lastName : `InPLname${suffixValue}v${index}`,
 		};
+		const out: CreateBasicPatientResult = { index, request, status: 'failed', completedStages: [], patientName: `${request.firstName} ${request.lastName}` };
+		const warnings: string[] = [];
+		let stage = 'findPatient' as CaseStage;
+		const enter = (next: CaseStage) => {
+			stage = next;
+			try { if (opts.onCaseStage) opts.onCaseStage(index, next); } catch (e) {}
+		};
+		const done = (st: CaseStage) => { out.completedStages.push(st); };
+		let lockedPatientId: number | null = null;
+		const releaseLock = async () => {
+			if (lockedPatientId === null) return;
+			const pidToRelease = lockedPatientId;
+			lockedPatientId = null;
+			try { await releaseRecordLock(pidToRelease, token, apiBaseUrl); } catch (e) { warnings.push(`ReleaseLock(patient ${pidToRelease}) failed: ${describeApiError(e)}`); }
+		};
 		try {
+			enter('findPatient');
 			const response = await postJson(url, request, 20000, headers, logFn);
-			// Log DuplicatePatient API response concisely
-			try { /* DuplicatePatient response logged in outcomes */ } catch (e) {}
-			// API always returns an array; take patientId from first element for this response
-			let thisPid: number | null = null;
-			try {
-				if (Array.isArray(response) && response.length && response[0] && response[0].patientId) {
-					const pid = Number(response[0].patientId);
-					if (!Number.isNaN(pid) && pid !== 0) {
-						thisPid = pid;
-						lastPatientId = pid; // still track as last seen
-					}
-				}
-			} catch (e) {}
-			outcomes[index - 1] = { index, request, response };
-			// if we have a patientId for this response, fetch its full patient and attach
-			if (thisPid) {
+			out.response = response;
+			const thisPid = Array.isArray(response) && response.length ? firstValidNumber([response[0] && response[0].patientId]) : undefined;
+			if (!thisPid) throw new Error(`GetDuplicatePatients returned no patientId for ${request.firstName} ${request.lastName} (response: ${JSON.stringify(response).slice(0, 300)})`);
+			lastPatientId = thisPid;
+			out.patientId = thisPid;
+			done('findPatient');
+
+			enter('getPatient');
+			const full = await getPatient(apiBaseUrl, thisPid, token, logFn);
+			out.fullPatient = full;
+			done('getPatient');
+
+			enter('recordLock');
+			const lockRes: any = await requestRecordLock(thisPid, token, apiBaseUrl);
+			if (lockRes && lockRes.error) throw new Error(`RequestLock returned an error: ${typeof lockRes.error === 'string' ? lockRes.error : JSON.stringify(lockRes.error)}`);
+			lockedPatientId = thisPid;
+			done('recordLock');
+
+			enter('createPatient');
+			let created: any;
+			for (let attempt = 1; ; attempt += 1) {
 				try {
-					const full = await getPatient(apiBaseUrl, thisPid, token, logFn);
-					outcomes[index - 1] = { index, request, response, fullPatient: full } as any;
-					let insertInsuranceResponse: any = undefined;
-					let insertInsuranceResponses: any[] | undefined = undefined;
-					let insertInsuranceError: string | undefined;
-					try {
-								// Request a record lock for this patient before creating
-								let lockRes: any = null;
-								try {
-									lockRes = await requestRecordLock(thisPid, token, apiBaseUrl);
-									// suppressed requestRecordLock log
-								} catch (e) {
-									outcomes[index - 1] = { index, request, response, fullPatient: full, error: `recordLock failed: ${String(e)}` } as any;
-									return;
-								}
-								if (lockRes && lockRes.error) {
-									outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: { lock: lockRes }, error: `recordLock returned error` } as any;
-									return;
-								}
-								// call CreatePatient and capture request+response
-								const created = await createPatient(apiBaseUrl, token, full, logFn, opts.extraHeaders, !!opts.isAnesthesiaBilling);
-						// Log CreatePatient API response (or fallback object)
-						try { /* CreatePatient response captured in outcomes */ } catch (e) {}
-						outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created } as any;
-						try {
-							// Prefer the API response if present; otherwise prefer the authoritative full GetPatient object;
-							// finally fall back to the request payload we sent.
-							let patientSource = (created && created.response != null)
-								? created.response
-								: (full ?? (created && created.request ? created.request : full));
-							// If gender is missing on the authoritative source but was present on the request we sent, use it
-							try {
-								const srcGender = created && created.request && (created.request as any).gender ? (created.request as any).gender : null;
-								if (srcGender && patientSource && (!patientSource.gender || (typeof patientSource.gender === 'string' && patientSource.gender.trim() === ''))) {
-									(patientSource as any).gender = srcGender;
-								}
-							} catch (e) {}
-					if (Array.isArray(opts.insuranceInsertOverridesList) && opts.insuranceInsertOverridesList.length) {
-						try {
-							insertInsuranceResponses = [];
-							const patientIdForInsert = firstValidNumber([
-								patientSource && patientSource.patientId,
-								created && created.response ? (created.response as any).patientId : undefined,
-								created && created.request ? (created.request as any).patientId : undefined,
-								full ? (full as any).patientId : undefined,
-								thisPid,
-							]);
-							if (!patientIdForInsert) {
-								insertInsuranceError = 'Missing patientId for insertInsuranceGemini payload';
-							} else {
-								const patientFirstName = firstNonEmptyString([
-									patientSource && patientSource.firstName,
-									created && created.response ? (created.response as any).firstName : undefined,
-									created && created.request ? (created.request as any).firstName : undefined,
-									full ? (full as any).firstName : undefined,
-									request.firstName,
-								]);
-								const patientLastName = firstNonEmptyString([
-									patientSource && patientSource.lastName,
-									created && created.response ? (created.response as any).lastName : undefined,
-									created && created.request ? (created.request as any).lastName : undefined,
-									full ? (full as any).lastName : undefined,
-									request.lastName,
-								]);
-								for (const ov of opts.insuranceInsertOverridesList) {
-									const payload = createInsertInsurancePayload({
-										...(ov ?? {}),
-										patientId: patientIdForInsert,
-										firstName: patientFirstName ?? request.firstName,
-										lastName: patientLastName ?? request.lastName,
-									});
-									const resp = await insertInsuranceGemini({
-										apiBaseUrl,
-										token,
-										payload,
-										timeoutMs: insertInsuranceTimeout,
-										extraHeaders: opts.extraHeaders,
-										logFn,
-									});
-									insertInsuranceResponses.push(resp);
-								}
-							}
-						} catch (insertErr) {
-							insertInsuranceError = insertErr && (insertErr as any).message ? (insertErr as any).message : String(insertErr);
-						}
-					} else if (opts.insuranceInsertOverrides) {
-						try {
-							const patientIdForInsert = firstValidNumber([
-								patientSource && patientSource.patientId,
-								created && created.response ? (created.response as any).patientId : undefined,
-								created && created.request ? (created.request as any).patientId : undefined,
-								full ? (full as any).patientId : undefined,
-								thisPid,
-							]);
-							if (!patientIdForInsert) {
-								insertInsuranceError = 'Missing patientId for insertInsuranceGemini payload';
-							} else {
-								const patientFirstName = firstNonEmptyString([
-									patientSource && patientSource.firstName,
-									created && created.response ? (created.response as any).firstName : undefined,
-									created && created.request ? (created.request as any).firstName : undefined,
-									full ? (full as any).firstName : undefined,
-									request.firstName,
-								]);
-								const patientLastName = firstNonEmptyString([
-									patientSource && patientSource.lastName,
-									created && created.response ? (created.response as any).lastName : undefined,
-									created && created.request ? (created.request as any).lastName : undefined,
-									full ? (full as any).lastName : undefined,
-									request.lastName,
-								]);
-								const payload = createInsertInsurancePayload({
-									...(opts.insuranceInsertOverrides ?? {}),
-									patientId: patientIdForInsert,
-									firstName: patientFirstName ?? request.firstName,
-									lastName: patientLastName ?? request.lastName,
-								});
-								insertInsuranceResponse = await insertInsuranceGemini({
-									apiBaseUrl,
-									token,
-									payload,
-									timeoutMs: insertInsuranceTimeout,
-									extraHeaders: opts.extraHeaders,
-									logFn,
-								});
-							}
-						} catch (insertErr) {
-							insertInsuranceError = insertErr && (insertErr as any).message ? (insertErr as any).message : String(insertErr);
-						}
-					}
-							// Auto overrides: room, appointment type, fee schedule + randomized 15-min slot across the day
-							const autoTime = isAutoMode ? generateRandom15MinSlot(opts.dos) : null;
-							const autoRoom = isAutoMode ? pickRandomRoom(roomsList) : {};
-							const autoApptType = isAutoMode ? pickRandomApptType(apptTypesList) : {};
-							const autoFeeSchedule = isAutoMode ? pickRandomFeeSchedule(feeSchedulesList) : undefined;
-							const cs = await createCaseSummary({
-								apiBaseUrl,
-								token,
-								patientResponse: patientSource,
-								roomIdOverride: (patientSource && (patientSource.roomId || patientSource.roomId === 0)) ? (patientSource.roomId as number) : (isAutoMode && autoRoom.roomId !== undefined ? autoRoom.roomId : (opts.roomIdOverride === undefined ? undefined : opts.roomIdOverride)),
-								roomNameOverride: (patientSource && (patientSource as any).roomName) ? (patientSource as any).roomName as string : (isAutoMode && autoRoom.roomName ? autoRoom.roomName : (opts.roomNameOverride === undefined ? undefined : opts.roomNameOverride)),
-								appointmentTypeIdOverride: (patientSource && (patientSource.appointmentTypeId || patientSource.appointmentTypeId === 0)) ? (patientSource.appointmentTypeId as number) : (isAutoMode && autoApptType.appointmentTypeId !== undefined ? autoApptType.appointmentTypeId : (opts.appointmentTypeIdOverride === undefined ? undefined : opts.appointmentTypeIdOverride)),
-								appointmentTypeNameOverride: (patientSource && patientSource.appointmentTypeName) ? (patientSource.appointmentTypeName as string) : (isAutoMode && autoApptType.appointmentTypeName ? autoApptType.appointmentTypeName : (opts.appointmentTypeNameOverride === undefined ? undefined : opts.appointmentTypeNameOverride)),
-								physicianIdOverride: (patientSource && (patientSource.primaryPhysicianId || patientSource.primaryPhysicianId === 0)) ? (patientSource.primaryPhysicianId as number) : (opts.physicianIdOverride === undefined ? undefined : (opts as any).physicianIdOverride),
-								physicianNameOverride: (patientSource && patientSource.primaryPhysician) ? (patientSource.primaryPhysician as string) : ((opts as any).physicianNameOverride === undefined ? undefined : (opts as any).physicianNameOverride),
-								feeScheduleOverride: (opts as any).feeScheduleOverride ?? autoFeeSchedule,
-								isAnesthesiaBilling: !!opts.isAnesthesiaBilling,
-								placeOfService,
-								dos: opts.dos,
-								logFn,
-								insuranceInsertResponse: insertInsuranceResponse,
-								insuranceInsertResponses: insertInsuranceResponses,
-								insurancePlanResponse: opts.insuranceCreateResult ? opts.insuranceCreateResult.plan : undefined,
-								insurancePlanResponses: Array.isArray(opts.insuranceCreateResults) ? opts.insuranceCreateResults.map(r => r && r.plan).filter(Boolean) : (opts.insuranceCreateResult ? [opts.insuranceCreateResult.plan] : undefined),
-								facilityIdOverride: opts.facilityId,
-								insuranceType: opts.insuranceType,
-								caseSummary: (isAutoMode && autoTime) ? {
-									duration: 15,
-									procedureStartDt: autoTime.startIso,
-									procedureStopDt: autoTime.endIso,
-									procedureStartTime: autoTime.startIso,
-									procedureStopTime: autoTime.endIso,
-									startTime: autoTime.startHHmm,
-									endTime: autoTime.endHHmm,
-									dateOfService: autoTime.dosText,
-									procedureDt: autoTime.baseStartIso,
-									roomId: (autoRoom.roomId !== undefined) ? autoRoom.roomId : undefined,
-									roomName: (autoRoom.roomName) ? autoRoom.roomName : undefined,
-								} : undefined,
-							});
-									outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: cs, insertInsuranceResponse, insertInsuranceResponses, insertInsuranceError } as any;
-									// release record lock for this patient
-									try {
-										const rel = await releaseRecordLock((patientSource && patientSource.patientId) ? (patientSource.patientId as number) : thisPid, token, apiBaseUrl);
-										// suppressed releaseRecordLock response log
-									} catch (e) {
-										// suppressed releaseRecordLock error log
-									}
-									// after releasing the record lock, trigger discharge flow (best-effort)
-									try {
-										const passPatientId = (patientSource && patientSource.patientId) ? (patientSource.patientId as number) : thisPid;
-										const passCaseSummaryId = cs && (cs.caseSummaryId || cs.caseSummaryID || cs.caseSummaryId === 0) ? (cs.caseSummaryId ?? cs.caseSummaryID) : undefined;
-										const depth = flowDepthValue;
-										// depth >=1 => discharge
-										if (depth >= 1) {
-											// suppressed discharge flow debug log
-											await runDischargeFlow(opts.username, apiBaseUrl, token, logFn, passPatientId, passCaseSummaryId as any, opts.facilityId);
-										}
-										// depth >=2 => cases-to-code; depth >=3 => include charge entry
-										if (passCaseSummaryId && depth >= 2) {
-											// suppressed cases-to-code debug log
-											await codingChargeEntry.performPatientCasesToCode(apiBaseUrl, String(passCaseSummaryId), token, logFn, {
-												chargeEntry: depth >= 3,
-												cptAmounts: (opts as any).cptAmounts,
-												feeScheduleOverride: (opts as any).feeScheduleOverride,
-												periodBatchOverride,
-												// Bind primary insurance carrier for charge entry
-												primaryInsuranceCarrierId: (function() {
-													try {
-														if (Array.isArray(opts.insuranceCreateResults) && opts.insuranceCreateResults.length) {
-															const plan = opts.insuranceCreateResults[0] && opts.insuranceCreateResults[0].plan;
-															const id = plan && (plan.insuranceCarrierId ?? plan.insuranceCarrierObjectId);
-															return typeof id === 'number' ? id : undefined;
-														}
-														if (opts.insuranceCreateResult && opts.insuranceCreateResult.plan) {
-															const plan = opts.insuranceCreateResult.plan;
-															const id = plan && (plan.insuranceCarrierId ?? plan.insuranceCarrierObjectId);
-															return typeof id === 'number' ? id : undefined;
-														}
-													} catch (e) {}
-													return undefined;
-												})(),
-												// Provide primary patient insurance: prefer first from list; fallback to single response in auto mode
-												primaryPatientInsurance: (function() {
-													try {
-														const list = insertInsuranceResponses || (opts as any).insertInsuranceResponses;
-														if (Array.isArray(list) && list.length) {
-															const first = list[0];
-															const pid = first && (first.patientInsuranceId ?? first.PatientInsuranceId);
-															if (typeof pid === 'number') {
-																const dn = first && (first.displayName ?? ((first.carrier && first.planName) ? `${first.carrier}, ${first.planName}` : undefined));
-																return { patientInsuranceId: pid, displayName: dn };
-															}
-														}
-													} catch (e) {}
-													try {
-														const single = insertInsuranceResponse || (opts as any).insertInsuranceResponse;
-														const pid = single && (single.patientInsuranceId ?? single.PatientInsuranceId);
-														if (typeof pid === 'number') {
-															const dn = single && (single.displayName ?? ((single.carrier && single.planName) ? `${single.carrier}, ${single.planName}` : undefined));
-															return { patientInsuranceId: pid, displayName: dn };
-														}
-													} catch (e) {}
-													return undefined;
-												})(),
-											});
-										}
-									} catch (dfErr) {
-										// suppressed discharge flow error log
-									}
-						} catch (csErr) {
-							// attach case summary error but keep previous data
-							try {
-								const errAny = csErr as any;
-								const msg = errAny && errAny.message ? errAny.message : String(errAny);
-								outcomes[index - 1] = { index, request, response, fullPatient: full, createPatientResponse: created, caseSummaryResponse: { error: msg }, insertInsuranceResponse, insertInsuranceResponses, insertInsuranceError } as any;
-							} catch (e) {}
-						}
-					} catch (createErr) {
-						// keep original data; optionally log
-					}
-				} catch (e) {
-					// swallow get errors but keep original response
+					created = await createPatient(apiBaseUrl, token, full, logFn, opts.extraHeaders, !!opts.isAnesthesiaBilling);
+					break;
+				} catch (e: any) {
+					// Under concurrency the API occasionally reports the patient lock as missing right after
+					// RequestLock succeeded ("RecordLock-Patient record lock is required ..."). Re-lock and retry.
+					const body = e && e.response && e.response.data ? JSON.stringify(e.response.data) : '';
+					const lockMissing = e && e.response && e.response.status === 400 && /record\s*lock/i.test(body);
+					if (!lockMissing || attempt >= 3) throw e;
+					warnings.push(`CreatePatient attempt ${attempt} said the patient record lock was missing; re-locked and retried.`);
+					await sleep(400 * attempt);
+					await requestRecordLock(thisPid, token, apiBaseUrl);
 				}
 			}
+			out.createPatientResponse = created;
+			// Prefer the API response if present; otherwise the authoritative GetPatient object; finally the request we sent.
+			const patientSource: any = (created && created.response != null && typeof created.response === 'object')
+				? created.response
+				: (full ?? (created && created.request ? created.request : full));
+			try {
+				const srcGender = created && created.request && (created.request as any).gender ? (created.request as any).gender : null;
+				if (srcGender && patientSource && (!patientSource.gender || (typeof patientSource.gender === 'string' && patientSource.gender.trim() === ''))) {
+					patientSource.gender = srcGender;
+				}
+			} catch (e) {}
+			done('createPatient');
+
+			// Insurance binding (non-fatal: the case is still created, the problem is reported as a warning)
+			let insertInsuranceResponse: any = undefined;
+			let insertInsuranceResponses: any[] | undefined = undefined;
+			const overridesList = Array.isArray(opts.insuranceInsertOverridesList) && opts.insuranceInsertOverridesList.length
+				? opts.insuranceInsertOverridesList
+				: (opts.insuranceInsertOverrides ? null : undefined);
+			if (overridesList !== undefined) {
+				const patientIdForInsert = firstValidNumber([
+					patientSource && patientSource.patientId,
+					created && created.request ? (created.request as any).patientId : undefined,
+					full ? (full as any).patientId : undefined,
+					thisPid,
+				]);
+				const patientFirstName = firstNonEmptyString([patientSource && patientSource.firstName, full ? (full as any).firstName : undefined, request.firstName]);
+				const patientLastName = firstNonEmptyString([patientSource && patientSource.lastName, full ? (full as any).lastName : undefined, request.lastName]);
+				const insertOne = async (ov: InsuranceInsertOverrides | undefined) => insertInsuranceGemini({
+					apiBaseUrl,
+					token,
+					payload: createInsertInsurancePayload({ ...(ov ?? {}), patientId: patientIdForInsert, firstName: patientFirstName ?? request.firstName, lastName: patientLastName ?? request.lastName }),
+					timeoutMs: insertInsuranceTimeout,
+					extraHeaders: opts.extraHeaders,
+					logFn,
+				});
+				try {
+					if (overridesList) {
+						insertInsuranceResponses = [];
+						for (const ov of overridesList) insertInsuranceResponses.push(await insertOne(ov));
+					} else {
+						insertInsuranceResponse = await insertOne(opts.insuranceInsertOverrides);
+					}
+				} catch (insertErr) {
+					out.insertInsuranceError = describeApiError(insertErr);
+					warnings.push(`Insurance not attached to patient: ${out.insertInsuranceError}`);
+				}
+			}
+			out.insertInsuranceResponse = insertInsuranceResponse;
+			out.insertInsuranceResponses = insertInsuranceResponses;
+
+			enter('createCase');
+			// Auto overrides: room, appointment type, fee schedule + randomized 15-min slot across the day
+			const autoTime = isAutoMode ? generateRandom15MinSlot(opts.dos) : null;
+			const autoRoom = isAutoMode ? pickRandomRoom(roomsList) : {};
+			const autoApptType = isAutoMode ? pickRandomApptType(usableApptTypes.length ? usableApptTypes : apptTypesList) : {};
+			const autoFeeSchedule = isAutoMode ? pickRandomFeeSchedule(feeSchedulesList) : undefined;
+			const chosenRoom = isAutoMode ? autoRoom : manualRoom;
+			const chosenAppt = isAutoMode ? autoApptType : manualAppt;
+			const has = (v: any) => v !== undefined && v !== null;
+			const cs = await createCaseSummary({
+				apiBaseUrl,
+				token,
+				patientResponse: patientSource,
+				roomIdOverride: (patientSource && has(patientSource.roomId)) ? (patientSource.roomId as number) : chosenRoom.roomId,
+				roomNameOverride: (patientSource && patientSource.roomName) ? (patientSource.roomName as string) : chosenRoom.roomName,
+				appointmentTypeIdOverride: (patientSource && has(patientSource.appointmentTypeId)) ? (patientSource.appointmentTypeId as number) : chosenAppt.appointmentTypeId,
+				appointmentTypeNameOverride: (patientSource && patientSource.appointmentTypeName) ? (patientSource.appointmentTypeName as string) : chosenAppt.appointmentTypeName,
+				physicianIdOverride: (patientSource && has(patientSource.primaryPhysicianId)) ? (patientSource.primaryPhysicianId as number) : opts.physicianIdOverride,
+				physicianNameOverride: (patientSource && patientSource.primaryPhysician) ? (patientSource.primaryPhysician as string) : opts.physicianNameOverride,
+				feeScheduleOverride: (opts as any).feeScheduleOverride ?? autoFeeSchedule,
+				isAnesthesiaBilling: !!opts.isAnesthesiaBilling,
+				placeOfService,
+				dos: opts.dos,
+				logFn,
+				insuranceInsertResponse: insertInsuranceResponse,
+				insuranceInsertResponses: insertInsuranceResponses,
+				insurancePlanResponse: opts.insuranceCreateResult ? opts.insuranceCreateResult.plan : undefined,
+				insurancePlanResponses: Array.isArray(opts.insuranceCreateResults) ? opts.insuranceCreateResults.map(r => r && r.plan).filter(Boolean) : (opts.insuranceCreateResult ? [opts.insuranceCreateResult.plan] : undefined),
+				facilityIdOverride: opts.facilityId,
+				insuranceType: opts.insuranceType,
+				caseSummary: (isAutoMode && autoTime) ? {
+					duration: 15,
+					procedureStartDt: autoTime.startIso,
+					procedureStopDt: autoTime.endIso,
+					procedureStartTime: autoTime.startIso,
+					procedureStopTime: autoTime.endIso,
+					startTime: autoTime.startHHmm,
+					endTime: autoTime.endHHmm,
+					dateOfService: autoTime.dosText,
+					procedureDt: autoTime.baseStartIso,
+					roomId: (autoRoom.roomId !== undefined) ? autoRoom.roomId : undefined,
+					roomName: (autoRoom.roomName) ? autoRoom.roomName : undefined,
+				} : undefined,
+			});
+			out.caseSummaryResponse = cs;
+			const caseSummaryId = cs ? firstValidNumber([cs.caseSummaryId, cs.caseSummaryID]) : undefined;
+			if (!caseSummaryId) throw new Error(`UpsertCaseSummary returned no caseSummaryId (response: ${JSON.stringify(cs).slice(0, 300)})`);
+			out.caseSummaryId = caseSummaryId;
+			const appointmentId = cs ? firstValidNumber([cs.appointmentId]) : undefined;
+			done('createCase');
+			await releaseLock();
+
+			const passPatientId = firstValidNumber([patientSource && patientSource.patientId, thisPid]) as number;
+			if (opts.isAnesthesiaBilling) {
+				// Anesthesia Billing: Financial Clearance -> Verification Complete -> Clinical Documentation -> Coding/Charge Entry tracker
+				if (flowDepthValue >= 1) {
+					enter('insuranceVerification');
+					await verifyAnesthesiaCase(apiBaseUrl, token, caseSummaryId, logFn);
+					done('insuranceVerification');
+					enter('clinicalDocumentation');
+					await documentAnesthesiaCase(apiBaseUrl, token, caseSummaryId, opts.facilityId, logFn);
+					// confirm the case really is Performed (it only then shows in the Coding/Charge Entry tracker)
+					const finalStatus = await getAnesthesiaCaseStatus(apiBaseUrl, token, caseSummaryId, logFn).catch(() => undefined);
+					if (finalStatus && !/^performed$/i.test(finalStatus)) {
+						throw new Error(`Case ${caseSummaryId} is "${finalStatus}" after documentation (expected Performed), so it will not appear in the Coding/Charge Entry tracker.`);
+					}
+					done('clinicalDocumentation');
+				}
+				out.status = 'passed';
+				return;
+			}
+			if (flowDepthValue >= 1) {
+				enter('discharge');
+				const d = await runDischargeFlow(opts.username, apiBaseUrl, token, logFn, passPatientId, caseSummaryId, opts.facilityId, appointmentId);
+				if (d.warnings && d.warnings.length) warnings.push(...d.warnings.map((w) => `Discharge: ${w}`));
+				if (!d.ok) throw new Error(d.error || 'Discharge failed');
+				done('discharge');
+			}
+			if (flowDepthValue >= 2) {
+				enter('casesToCode');
+				const listIns = insertInsuranceResponses && insertInsuranceResponses.length ? insertInsuranceResponses[0] : undefined;
+				const c = await codingChargeEntry.performPatientCasesToCode(apiBaseUrl, String(caseSummaryId), token, logFn, {
+					chargeEntry: flowDepthValue >= 3,
+					cptAmounts: (opts as any).cptAmounts,
+					feeScheduleOverride: (opts as any).feeScheduleOverride,
+					periodBatchOverride,
+					primaryInsuranceCarrierId,
+					primaryPatientInsurance: toPatientInsurance(listIns) ?? toPatientInsurance(insertInsuranceResponse),
+					appointmentId,
+				});
+				if (!c.ok) {
+					if (c.failedStage === 'chargeEntry') { done('casesToCode'); enter('chargeEntry'); }
+					throw new Error(c.error || 'Cases to Code failed');
+				}
+				done('casesToCode');
+				if (flowDepthValue >= 3) done('chargeEntry');
+			}
+			out.status = 'passed';
 		} catch (err: any) {
-			const message = err && err.message ? err.message : String(err);
-			outcomes[index - 1] = { index, request, error: message };
+			out.status = 'failed';
+			out.failedStage = stage;
+			out.failedStageLabel = CASE_STAGE_LABELS[stage];
+			out.error = formatStageError(stage, err);
+			if (stage === 'createCase') out.caseSummaryResponse = { error: out.error };
+		} finally {
+			await releaseLock();
+			if (warnings.length) out.warnings = warnings;
+			outcomes[index - 1] = out;
+			totals.completed += 1;
+			if (out.status === 'passed') totals.passed += 1; else totals.failed += 1;
+			try { if (opts.onCaseComplete) opts.onCaseComplete(out, { ...totals }); } catch (e) {}
 		}
 	};
 
@@ -958,8 +1028,13 @@ export async function createBasicPatients(opts: CreateBasicPatientsOptions) {
 				}
 
 	const results = outcomes.filter(Boolean) as CreateBasicPatientResult[];
-	const hasError = results.some((o) => !!o.error);
-	return { ok: !hasError, results, lastPatientId };
+	const failuresByStage: Record<string, number> = {};
+	results.filter((r) => r.status === 'failed').forEach((r) => {
+		const k = r.failedStageLabel || 'Unknown';
+		failuresByStage[k] = (failuresByStage[k] || 0) + 1;
+	});
+	const summary = { total, passed: totals.passed, failed: totals.failed, failuresByStage };
+	return { ok: totals.failed === 0, results, lastPatientId, summary, warnings: runWarnings };
 }
 
 export default createBasicPatients;

@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { getJson } from '../utils/api';
+import { useGranularBusinessRoutes } from './businessConfig';
 
 export async function requestRecordLock(patientId: number, token: string, apiBaseUrl?: string) {
     if (!apiBaseUrl) throw new Error('apiBaseUrl is required for requestRecordLock');
@@ -165,23 +166,23 @@ export async function getExternalFacilities(token: string, apiBaseUrl: string | 
     return getJson(url, 15000, headers as any);
 }
 
+// GL accounts for the Transaction Codes To Debit / To Credit dropdowns.
+// Granular route when "Business Office Granular Permissions" is on, legacy route otherwise.
+// Both answer 403 when the "General Ledger Account Functionality" feature is off — then there are no GL accounts to pick.
 export async function getGeneralLedgerAccounts(token: string, apiBaseUrl?: string, extraHeaders?: Record<string,string>) {
     if (!apiBaseUrl) throw new Error('apiBaseUrl is required for getGeneralLedgerAccounts');
     const base = String(apiBaseUrl).replace(/\/+$/, '');
-    const url = `${base}/api/facility/business/transaction-codes/general-ledger-accounts/is-active/false`;
-    const defaultHeaders: Record<string,string> = Object.assign({
-        Accept: 'application/json',
-        priority: 'u=1, i',
-        token,
-        Referer: base + '/',
-    }, extraHeaders || {});
-
+    const headers: Record<string,string> = Object.assign({ Accept: 'application/json', token, Referer: base + '/' }, extraHeaders || {});
+    const granular = await useGranularBusinessRoutes(base, token);
+    const url = granular
+        ? `${base}/api/facility/business/transaction-codes/general-ledger-accounts/is-active/false`
+        : `${base}/api/GeneralLedgerAccount/List/false`;
     try {
-        const res = await getJson(url, 15000, defaultHeaders as any);
-        return res;
-    } catch (err) {
-        const axiosRes = await axios.get(url, { headers: defaultHeaders, timeout: 15000, responseType: 'json' });
-        return axiosRes.data;
+        const res = await getJson(url, 15000, headers as any);
+        return Array.isArray(res) ? res : [];
+    } catch (err: any) {
+        if (err && err.response && err.response.status === 403) return [];
+        throw err;
     }
 }
 

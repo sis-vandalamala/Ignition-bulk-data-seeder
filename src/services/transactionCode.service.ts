@@ -1,28 +1,27 @@
-import { postJson, type ApiLogEntry } from '../utils/api';
+import { postJson, describeApiError, type ApiLogEntry } from '../utils/api';
+import { apiRoot, jsonHeaders, useGranularBusinessRoutes, uniqueSuffix } from './businessConfig';
 
-const CREATE_TRANSACTION_CODE_ENDPOINT = '/api/facility/business/transaction-codes';
+// TransactionType ids (SIS TransactionTypeEnum). "Charge" (1) is system-only and not offered.
+export const TRANSACTION_TYPES: Record<string, number> = {
+	'Payment': 2,
+	'Unassigned Payment': 3,
+	'Write-Off': 4,
+	'Correction': 5,
+	'Debit': 6,
+	'Transfer': 7,
+	'Allocation': 8,
+};
 
-function buildHeaders(token: string, extra?: Record<string, string>) {
-	const base: Record<string, string> = {
-		accept: 'application/json, text/plain, */*',
-		'content-type': 'application/json;charset=UTF-8',
-		token,
-	};
-	if (extra) {
-		for (const k of Object.keys(extra)) base[k] = extra[k];
-	}
-	return base;
-}
-
-function generateUniqueTransactionCodeName() {
-	const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
-	return `TXN ${Date.now()}${rand}`;
+function glRef(id?: string | number) {
+	const n = Number(id);
+	return id !== undefined && id !== '' && !Number.isNaN(n) && n > 0 ? { generalLedgerAccountId: n } : null;
 }
 
 export type CreateTransactionCodeOptions = {
 	apiBaseUrl: string;
 	token: string;
-	transactionCodeName?: string;
+	transactionCodeName: string;
+	granular: boolean;
 	type?: string;
 	toDebit?: string;
 	toCredit?: string;
@@ -31,56 +30,62 @@ export type CreateTransactionCodeOptions = {
 	logFn?: (entry: ApiLogEntry) => void;
 };
 
-export async function createTransactionCode({ apiBaseUrl, token, transactionCodeName, type, toDebit, toCredit, timeoutMs = 15000, extraHeaders, logFn }: CreateTransactionCodeOptions) {
-	if (!apiBaseUrl) throw new Error('apiBaseUrl is required');
-	if (!token) throw new Error('token is required');
-	const base = String(apiBaseUrl).replace(/\/$/, '');
-	const url = `${base}${CREATE_TRANSACTION_CODE_ENDPOINT}`;
-	const headers = buildHeaders(token, extraHeaders);
+export async function createTransactionCode(o: CreateTransactionCodeOptions) {
+	const url = o.granular ? `${apiRoot(o.apiBaseUrl)}/facility/business/transaction-codes` : `${apiRoot(o.apiBaseUrl)}/TransactionCode/UpsertTransactionCode`;
+	const typeId = o.type ? TRANSACTION_TYPES[o.type] : undefined;
+	if (o.type && typeId === undefined) throw new Error(`Unknown transaction type "${o.type}" (expected one of: ${Object.keys(TRANSACTION_TYPES).join(', ')})`);
+	// Same shape the SIS app saves (TransactionCode model); organizationId comes from the session
 	const payload: Record<string, any> = {
-		transactionCodeName: transactionCodeName || generateUniqueTransactionCodeName(),
+		transactionCodeId: 0,
+		transactionCodeName: o.transactionCodeName,
+		transactionTypeId: typeId ?? null,
+		transactionType: o.type ?? null,
+		contractualAdjustmentTf: false,
+		itemSource: 1,
+		generalLedgerToDebit: glRef(o.toDebit),
+		generalLedgerToCredit: glRef(o.toCredit),
 	};
-	if (type !== undefined) payload.type = type;
-	if (toDebit !== undefined) payload.toDebit = toDebit;
-	if (toCredit !== undefined) payload.toCredit = toCredit;
-	return postJson(url, payload, timeoutMs, headers, logFn);
+	try {
+		return await postJson(url, payload, o.timeoutMs ?? 20000, jsonHeaders(o.token, o.extraHeaders), o.logFn);
+	} catch (e) {
+		throw new Error(`Save transaction code failed: ${describeApiError(e)}`);
+	}
 }
 
-export type CreateTransactionCodesBatchOptions = {
-	apiBaseUrl: string;
-	token: string;
+export type CreateTransactionCodesBatchOptions = Omit<CreateTransactionCodeOptions, 'transactionCodeName' | 'granular'> & {
 	count?: number;
-	type?: string;
-	toDebit?: string;
-	toCredit?: string;
-	timeoutMs?: number;
-	extraHeaders?: Record<string, string>;
-	logFn?: (entry: ApiLogEntry) => void;
+	mode?: 'auto' | 'manual';
 };
 
 export type TransactionCodeAttemptResult = {
 	ok: boolean;
+	index: number;
 	transactionCodeName: string;
+	transactionCodeId?: number;
+	type?: string;
 	data?: any;
 	error?: string;
 };
 
-export async function createTransactionCodes({ apiBaseUrl, token, count = 1, type, toDebit, toCredit, timeoutMs, extraHeaders, logFn }: CreateTransactionCodesBatchOptions): Promise<TransactionCodeAttemptResult[]> {
-	const total = Math.max(1, Number(count) || 1);
+export async function createTransactionCodes(opts: CreateTransactionCodesBatchOptions): Promise<{ results: TransactionCodeAttemptResult[]; route: 'granular' | 'legacy' }> {
+	if (!opts.apiBaseUrl) throw new Error('apiBaseUrl is required');
+	if (!opts.token) throw new Error('Not logged in (no token)');
+	const total = Math.max(1, Number(opts.count) || 1);
+	const granular = await useGranularBusinessRoutes(opts.apiBaseUrl, opts.token, opts.logFn);
+	const typeNames = Object.keys(TRANSACTION_TYPES);
 	const results: TransactionCodeAttemptResult[] = [];
-	for (let i = 0; i < total; i += 1) {
-		const transactionCodeName = generateUniqueTransactionCodeName();
+	for (let i = 1; i <= total; i += 1) {
+		const transactionCodeName = `TXN ${uniqueSuffix()}`;
+		// Auto mode: random type, no GL accounts
+		const type = opts.mode === 'auto' ? typeNames[Math.floor(Math.random() * typeNames.length)] : (opts.type || 'Allocation');
 		try {
-			const data = await createTransactionCode({ apiBaseUrl, token, transactionCodeName, type, toDebit, toCredit, timeoutMs, extraHeaders, logFn });
-			results.push({ ok: true, transactionCodeName, data });
+			const data = await createTransactionCode({ ...opts, transactionCodeName, granular, type, toDebit: opts.mode === 'auto' ? undefined : opts.toDebit, toCredit: opts.mode === 'auto' ? undefined : opts.toCredit });
+			results.push({ ok: true, index: i, transactionCodeName, type, transactionCodeId: data && data.transactionCodeId, data });
 		} catch (err: any) {
-			results.push({ ok: false, transactionCodeName, error: err && err.message ? err.message : String(err) });
+			results.push({ ok: false, index: i, transactionCodeName, type, error: err && err.message ? err.message : String(err) });
 		}
 	}
-	return results;
+	return { results, route: granular ? 'granular' : 'legacy' };
 }
 
-export default {
-	createTransactionCode,
-	createTransactionCodes,
-};
+export default { createTransactionCode, createTransactionCodes };

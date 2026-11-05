@@ -2,7 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
-import { postJson, getJson, ApiLogEntry } from '../utils/api';
+import { postJson, getJson, ApiLogEntry, describeApiError } from '../utils/api';
 
 // Helper to ensure /api prefix is present for discharge-related endpoints.
 function apiPrefixed(base: string) {
@@ -88,12 +88,29 @@ export async function getFormByName(apiBaseUrl: string, token: string, logFn?: (
 	}
 }
 
-export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, token?: string, logFn?: (entry: ApiLogEntry) => void, patientId?: number, caseSummaryId?: number, orgId?: number): Promise<void> {
+export type DischargeOutcome = {
+	ok: boolean;
+	error?: string; // first critical failure (case will not reach Cases to Code)
+	warnings: string[]; // non-critical step failures
+};
+
+// Steps whose failure means the case is NOT moved to Performed (Cases to Code tracker).
+// Other steps (form usage, staff entries, area-of-care reads) are recorded as warnings only.
+export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, token?: string, logFn?: (entry: ApiLogEntry) => void, patientId?: number, caseSummaryId?: number, orgId?: number, appointmentId?: number): Promise<DischargeOutcome> {
 	userName = "sisadmin";
-	if (!userName || !apiBaseUrl || !token) {
-		// suppressed missing params log
-		return;
-	}
+	const outcome: DischargeOutcome = { ok: true, warnings: [] };
+	const critical = (step: string, res: any) => {
+		if (res && typeof res.status === 'number' && res.status >= 400) {
+			const msg = `${step} failed: ${res.error || 'HTTP ' + res.status}${res.response ? ' — ' + (typeof res.response === 'string' ? res.response : JSON.stringify(res.response)) : ''}`;
+			if (outcome.ok) { outcome.ok = false; outcome.error = msg; }
+			else outcome.warnings.push(msg);
+		}
+	};
+	const warn = (step: string, res: any) => {
+		if (res && typeof res.status === 'number' && res.status >= 400) outcome.warnings.push(`${step}: ${res.error || 'HTTP ' + res.status}`);
+	};
+	if (!apiBaseUrl || !token) return { ok: false, error: 'Discharge skipped: apiBaseUrl/token missing', warnings: [] };
+	if (!patientId || !caseSummaryId) return { ok: false, error: `Discharge skipped: missing ${!patientId ? 'patientId' : 'caseSummaryId'}`, warnings: [] };
 	try {
 		const staff = await getStaffDetails(userName, apiBaseUrl, token, logFn);
 		// suppressed getStaffDetails result log
@@ -115,6 +132,9 @@ export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, t
 			} catch (e) {
 				// suppressed getModulesBycaseId error log
 			}
+		}
+		if (!extractedModuleId) {
+			return { ok: false, error: `Recovery module not found for case ${caseSummaryId} (GetCaseDetailInformation / GetModulesBycaseId returned no 'Recovery' module), so the case cannot be discharged.`, warnings: outcome.warnings };
 		}
 		// Fetch form by name (RecordHeader/Patient Panel/GetFormbyName)
 		let extractedFormId: number | undefined = undefined;
@@ -162,7 +182,7 @@ export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, t
 			try {
 				if (caseSummaryId) {
 					const csu = await caseSummaryUpdateCaseStatus(caseSummaryId, 0, apiBaseUrl, token, logFn);
-					// suppressed caseSummaryUpdateCaseStatus result log
+					critical('UpdateCaseStatus(0)', csu);
 				}
 			} catch (e) {
 				// suppressed caseSummaryUpdateCaseStatus error log
@@ -189,7 +209,7 @@ export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, t
 			try {
 				if (patientId && caseSummaryId && extractedModuleId) {
 					const insertRes = await insertAreaOfCareInformation(undefined, caseSummaryId, extractedModuleId as number, patientId, apiBaseUrl, token, logFn);
-					// suppressed insertAreaOfCareInformation result log
+					warn('InsertAreaCareInformation', insertRes);
 				}
 				} catch (e) {
 					// suppressed insertAreaOfCareInformation error log
@@ -236,7 +256,7 @@ export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, t
 			try {
 				if (caseSummaryId && extractedModuleId) {
 					const phIns = await insertPatientHandOffData(4, 0, null, caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					// suppressed insertPatientHandOffData result log
+					critical('InsertPatientHandOffData(status 4 In Progress)', phIns);
 				}
 				} catch (e) {
 					// suppressed insertPatientHandOffData error log
@@ -256,7 +276,7 @@ export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, t
 			try {
 				if (caseSummaryId && extractedModuleId) {
 					const phIns10 = await insertPatientHandOffData(10, 10, null, caseSummaryId, extractedModuleId as number, apiBaseUrl, token, logFn);
-					// suppressed insertPatientHandOffData(10,10,null) result log
+					critical('InsertPatientHandOffData(status 10 Performed)', phIns10);
 				}
 				} catch (e) {
 					// suppressed insertPatientHandOffData(10,10,null) error log
@@ -284,8 +304,8 @@ export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, t
 			// Upsert CaseSummary information (status updates etc.)
 			try {
 				if (caseSummaryId) {
-					const upsertRes = await upsertCaseSummaryInfo(caseSummaryId, undefined, apiBaseUrl, token, logFn);
-					// suppressed upsertCaseSummaryInfo result log
+					const upsertRes = await upsertCaseSummaryInfo(caseSummaryId, appointmentId, apiBaseUrl, token, logFn);
+					critical('UpsertCaseSummaryInfo(status 10 Performed)', upsertRes);
 				}
 			} catch (e) {
 				// suppressed upsertCaseSummaryInfo error log
@@ -294,7 +314,7 @@ export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, t
 			try {
 				if (caseSummaryId) {
 					const relRes = await releaseLockPatient('Recovery', caseSummaryId, apiBaseUrl, token, orgId, logFn);
-					// suppressed releaseLockPatient result log
+					warn('ReleaseLock(Recovery)', relRes);
 				}
 			} catch (e) {
 				// suppressed releaseLockPatient error log
@@ -302,8 +322,10 @@ export async function runDischargeFlow(userName?: string, apiBaseUrl?: string, t
 
 		// Additional ordered APIs can be placed here
 	} catch (e) {
-		// suppressed runDischargeFlow error log
+		const msg = (e as any) && (e as any).message ? (e as any).message : String(e);
+		if (outcome.ok) { outcome.ok = false; outcome.error = `Discharge flow error: ${msg}`; }
 	}
+	return outcome;
 }
 
 export async function getFormUsageByFormOwner(moduleId: number, caseSummaryId: number, formId: number, apiBaseUrl: string, token: string, logFn?: (entry: ApiLogEntry) => void) {
@@ -537,13 +559,27 @@ export async function insertPatientHandOffData(caseStatus: number, defaultCaseSt
 		const raw = fs.readFileSync(tplPath, 'utf8');
 		payload = JSON.parse(raw);
 	} catch (e) {
-		try {
-			const ph = await getPatientHandsOffData(caseSummaryId, moduleId, apiBaseUrl, token, logFn);
-			if (ph && ph.raw) payload = typeof ph.raw === 'string' ? JSON.parse(ph.raw) : JSON.parse(JSON.stringify(ph.raw));
-		} catch (e2) {
-			payload = {};
+		let lastErr: any = null;
+		for (let attempt = 1; attempt <= 3; attempt += 1) {
+			try {
+				const ph = await getPatientHandsOffData(caseSummaryId, moduleId, apiBaseUrl, token, logFn);
+				if (ph && ph.raw) {
+					payload = typeof ph.raw === 'string' ? JSON.parse(ph.raw) : JSON.parse(JSON.stringify(ph.raw));
+					break;
+				}
+				lastErr = ph && ph.error ? ph.error : 'empty response';
+			} catch (e2) {
+				lastErr = e2;
+			}
+			if (attempt < 3) await new Promise((r) => setTimeout(r, 500 * attempt));
+		}
+		if (!payload || typeof payload !== 'object' || !Object.keys(payload).length) {
+			return { status: 500, error: `GetPatientHandsOffData failed for case ${caseSummaryId} (${String(lastErr)}); not sending an empty hand-off payload` } as any;
 		}
 	}
+	// The API rejects the hand-off without these ids; make sure they are always present
+	if (!payload.caseSummaryId) payload.caseSummaryId = caseSummaryId;
+	if (!payload.moduleId && moduleId) payload.moduleId = moduleId;
 
 	try {
 		const now = new Date();
@@ -573,7 +609,7 @@ export async function insertPatientHandOffData(caseStatus: number, defaultCaseSt
 		const res = await postJson(url, payload, 20000, headers, logFn);
 		return { status: 200, raw: res } as any;
 	} catch (err) {
-		return { status: 500, error: (err as any) && (err as any).message ? (err as any).message : String(err) } as any;
+		return { status: 500, error: describeApiError(err) } as any;
 	}
 }
 
@@ -608,7 +644,7 @@ export async function upsertCaseSummaryInfo(caseSummaryId: number, appointmentId
 		let detail: any = null;
 		try { detail = err.response ? err.response.data : null; } catch (_) {}
 		// suppressed upsertCaseSummaryInfo error detail log
-		return { status: 500, error: err.message, response: detail, sentPayload: payload } as any;
+		return { status: 500, error: describeApiError(err), sentPayload: payload } as any;
 	}
 }
 

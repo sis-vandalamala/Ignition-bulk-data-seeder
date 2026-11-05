@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs';
-import { getJson, postJson, ApiLogEntry } from '../utils/api';
+import { getJson, postJson, ApiLogEntry, describeApiError } from '../utils/api';
 import axios from 'axios';
 
 const DEFAULT_DIAG_CODE = 'H44.001';
@@ -21,6 +21,14 @@ export type PerformCasesToCodeOptions = {
   primaryInsuranceCarrierId?: number;
   // Primary patient insurance mapping for charge entry UI
   primaryPatientInsurance?: { patientInsuranceId: number; displayName?: string };
+  // The case's real appointmentId (from the UpsertCaseSummary response); sent on UpsertCaseSummaryInfo
+  appointmentId?: number;
+};
+
+export type CasesToCodeOutcome = {
+  ok: boolean;
+  failedStage?: 'casesToCode' | 'chargeEntry';
+  error?: string;
 };
 
 type PerformPatientChargeEntryOptions = {
@@ -33,6 +41,7 @@ type PerformPatientChargeEntryOptions = {
   primaryInsuranceCarrierId?: number;
   // If provided, will populate lists and set `primaryInsuranceId`
   primaryPatientInsurance?: { patientInsuranceId: number; displayName?: string };
+  appointmentId?: number;
 };
 
 function apiBase(base: string) {
@@ -95,14 +104,22 @@ export async function getICDCode(apiBaseUrl: string, icdCode: string, token: str
 }
 
 
-export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryId: string, token: string, logFn?: (entry: ApiLogEntry) => void, options?: PerformCasesToCodeOptions) {
+export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryId: string, token: string, logFn?: (entry: ApiLogEntry) => void, options?: PerformCasesToCodeOptions): Promise<CasesToCodeOutcome> {
   const diagnosisCode = DEFAULT_DIAG_CODE;
   // load template
   const tplPath = path.join(__dirname, '..', 'reqTemplates', 'CasesToCodeRequest.json');
   let tpl: any = {};
   try { tpl = JSON.parse(fs.readFileSync(tplPath, 'utf8')); } catch (e) { tpl = { performedItems: [], deletedPerformedItems: [] }; }
 
-  const scheduled = await fetchScheduledProceduresWithRetry(apiBaseUrl, caseSummaryId, token, logFn);
+  let scheduled: any;
+  try {
+    scheduled = await fetchScheduledProceduresWithRetry(apiBaseUrl, caseSummaryId, token, logFn);
+  } catch (e) {
+    return { ok: false, failedStage: 'casesToCode', error: `GetScheduledProcedures failed: ${describeApiError(e)}` };
+  }
+  if (!Array.isArray(scheduled) || !scheduled.length) {
+    return { ok: false, failedStage: 'casesToCode', error: `No scheduled procedures found for case ${caseSummaryId} after 5 attempts — the case was probably not discharged (status Performed), so it cannot be coded.` };
+  }
   const icdRes = await getICDCode(apiBaseUrl, diagnosisCode, token, logFn);
   // icdRes may be array; find diagnosis object matching quickCode
   let diagnosisObj: any = null;
@@ -146,18 +163,22 @@ export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryI
   }
 
   const casesToCode = { performedItems, deletedPerformedItems };
-  const resp = await performCasesToCode(apiBaseUrl, casesToCode, token, logFn);
-  // Update case status to '11' and upsert case summary info (currentStatus='11', previousStatus='10') -- run BEFORE charge entry
+  let resp: any;
+  try {
+    resp = await performCasesToCode(apiBaseUrl, casesToCode, token, logFn);
+  } catch (e) {
+    return { ok: false, failedStage: 'casesToCode', error: `SavePerformedItems failed: ${describeApiError(e)}` };
+  }
+  // Update case status to '11' (Ready to Charge) and upsert case summary info — run BEFORE charge entry
   try {
     await updateCaseStatus(apiBaseUrl, caseSummaryId, '11', token, logFn);
   } catch (e) {
-    try { if (logFn) logFn({ url: 'updateCaseStatus', method: 'POST', status: 'error', error: String(e), timestamp: new Date().toISOString() } as any); } catch (ee) {}
+    return { ok: false, failedStage: 'casesToCode', error: `UpdateCaseStatus(11 Ready to Charge) failed: ${describeApiError(e)}` };
   }
-  
   try {
-    await upsertCaseSummaryInfo(apiBaseUrl, caseSummaryId, '11', '10', token, logFn);
+    await upsertCaseSummaryInfo(apiBaseUrl, caseSummaryId, '11', '10', token, logFn, options?.appointmentId);
   } catch (e) {
-    try { if (logFn) logFn({ url: 'upsertCaseSummaryInfo', method: 'PUT', status: 'error', error: String(e), timestamp: new Date().toISOString() } as any); } catch (ee) {}
+    return { ok: false, failedStage: 'casesToCode', error: `UpsertCaseSummaryInfo(11 Ready to Charge) failed: ${describeApiError(e)}` };
   }
 
   // Parse response to object if needed, then perform charge entry
@@ -165,7 +186,7 @@ export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryI
   try {
     if (typeof resp === 'string') respObj = resp ? JSON.parse(resp) : resp;
   } catch (e) {
-    // suppressed console output
+    // keep raw response
   }
   if (!respObj || typeof respObj !== 'object') respObj = {};
   if (!respObj.result || typeof respObj.result !== 'object') respObj.result = {};
@@ -174,33 +195,24 @@ export async function performPatientCasesToCode(apiBaseUrl: string, caseSummaryI
   }
 
   const doChargeEntry = options && Object.prototype.hasOwnProperty.call(options, 'chargeEntry') ? !!options.chargeEntry : true;
-  if (doChargeEntry) {
-    try {
-      // suppressed console output
-      // augment response object with UI-provided amounts for charge wiring
-      try {
-        if (options && options.cptAmounts) {
-          respObj.cptAmounts = options.cptAmounts;
-        }
-        if (options && options.feeScheduleOverride) {
-          respObj.feeScheduleOverride = options.feeScheduleOverride;
-        }
-      } catch (e) {}
-      const chargeResult = await performPatientChargeEntry(apiBaseUrl, respObj, {
-        amount: '200',
-        token,
-        logFn,
-        periodBatch: options?.periodBatchOverride,
-        caseSummaryId,
-        primaryInsuranceCarrierId: options?.primaryInsuranceCarrierId,
-        primaryPatientInsurance: options?.primaryPatientInsurance,
-      });
-      try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'ok', timestamp: new Date().toISOString(), durationMs: 0 } as any); } catch (e) {}
-    } catch (e) {
-      try { if (logFn) logFn({ url: 'performPatientChargeEntry', method: 'POST', status: 'error', error: String(e), timestamp: new Date().toISOString() } as any); } catch (ee) {}
-    }
-  } else {
-    // suppressed console output for skipped charge entry
+  if (!doChargeEntry) return { ok: true };
+  try {
+    // augment response object with UI-provided amounts for charge wiring
+    if (options && options.cptAmounts) respObj.cptAmounts = options.cptAmounts;
+    if (options && options.feeScheduleOverride) respObj.feeScheduleOverride = options.feeScheduleOverride;
+    await performPatientChargeEntry(apiBaseUrl, respObj, {
+      amount: '200',
+      token,
+      logFn,
+      periodBatch: options?.periodBatchOverride,
+      caseSummaryId,
+      primaryInsuranceCarrierId: options?.primaryInsuranceCarrierId,
+      primaryPatientInsurance: options?.primaryPatientInsurance,
+      appointmentId: options?.appointmentId,
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, failedStage: 'chargeEntry', error: describeApiError(e) };
   }
 }
 
@@ -208,17 +220,11 @@ export async function updateCaseStatus(apiBaseUrl: string, caseSummaryId: string
   const base = apiBase(apiBaseUrl);
   const rel = `/CaseSummary/UpdateCaseSatus/${caseSummaryId}`;
   const url = base + rel;
-  try {
-    const res = await postJson(url, caseStatus, 20000, { 'Content-Type': 'application/json', token }, logFn);
-    try { if (logFn) logFn({ url, method: 'POST', status: 200, timestamp: new Date().toISOString() } as any); } catch (e) {}
-    return res;
-  } catch (err: any) {
-    try { if (logFn) logFn({ url, method: 'POST', status: 'error', error: err.message, timestamp: new Date().toISOString() } as any); } catch (e) {}
-    throw err;
-  }
+  // postJson logs the call (with the API error body on failure) and throws on non-2xx
+  return await postJson(url, caseStatus, 20000, { 'Content-Type': 'application/json', token }, logFn);
 }
 
-export async function upsertCaseSummaryInfo(apiBaseUrl: string, caseSummaryId: string, currentStatus: string, previousStatus: string, token: string, logFn?: (entry: ApiLogEntry) => void) {
+export async function upsertCaseSummaryInfo(apiBaseUrl: string, caseSummaryId: string, currentStatus: string, previousStatus: string, token: string, logFn?: (entry: ApiLogEntry) => void, appointmentId?: number) {
   const base = apiBase(apiBaseUrl);
   const rel = `/CaseSummary/UpsertCaseSummaryInfo`;
   const url = base + rel;
@@ -238,14 +244,16 @@ export async function upsertCaseSummaryInfo(apiBaseUrl: string, caseSummaryId: s
   payload.status = currentStatus;
   payload.statusAtDischarge = 10;
   payload.previousStatus = previousStatus;
-  payload.appointmentId = payload.appointmentId ?? 321;
+  // The template's appointmentId belongs to another org; always send the case's own appointment when known
+  if (typeof appointmentId === 'number' && appointmentId > 0) payload.appointmentId = appointmentId;
+  else payload.appointmentId = payload.appointmentId ?? 321;
 
   try {
     const res = await axios.put(url, payload, { headers: { 'Content-Type': 'application/json', token }, timeout: 20000 });
     try { if (logFn) logFn({ url, method: 'PUT', status: res.status, timestamp: new Date().toISOString() } as any); } catch (e) {}
     return res.data;
   } catch (err: any) {
-    try { if (logFn) logFn({ url, method: 'PUT', status: 'error', error: err.message, timestamp: new Date().toISOString() } as any); } catch (e) {}
+    try { if (logFn) logFn({ url, method: 'PUT', status: err && err.response ? err.response.status : 'error', error: describeApiError(err), timestamp: new Date().toISOString() } as any); } catch (e) {}
     throw err;
   }
 }
@@ -254,50 +262,19 @@ export async function performCasesToCode(apiBaseUrl: string, casesToCodeRequest:
   const base = apiBase(apiBaseUrl);
   const rel = `/CaseToCode/SavePerformedItems`;
   const url = base + rel;
-  try {
-    const res = await postJson(url, casesToCodeRequest, 20000, { 'Content-Type': 'application/json', token }, logFn);
-    // Map response as string for parity with Java
-    try { if (logFn) logFn({ url, method: 'POST', status: 200, timestamp: new Date().toISOString() } as any); } catch (e) {}
-    return res;
-  } catch (err: any) {
-    try { if (logFn) logFn({ url, method: 'POST', status: 'error', error: err.message, timestamp: new Date().toISOString() } as any); } catch (e) {}
-    throw err;
-  }
+  // postJson logs the call (with the API error body on failure) and throws on non-2xx
+  return await postJson(url, casesToCodeRequest, 20000, { 'Content-Type': 'application/json', token }, logFn);
 }
 
 export async function performChargeEntry(apiBaseUrl: string, chargeEntryRequestBody: any, token: string, logFn?: (entry: ApiLogEntry) => void) {
   const base = apiBase(apiBaseUrl);
   const rel = `/CaseToCharge/SavePerformedProcedure/`;
   const url = base + rel;
-  try {
-    // Debug: Log the final payload before making API call
-    try {
-      const payloadStr = (() => {
-        try { return typeof chargeEntryRequestBody === 'string' ? chargeEntryRequestBody : JSON.stringify(chargeEntryRequestBody, null, 2); } catch { return String(chargeEntryRequestBody); }
-      })();
-      // Optional structured log callback
-      try { if (logFn) logFn({ url, method: 'POST', status: 'payload', timestamp: new Date().toISOString(), payload: payloadStr } as any); } catch (e) {}
-    } catch (e) {}
-    // suppressed verbose debug logs
-    // Use the shared postJson wrapper which returns response data or throws on error
-    const res = await postJson(url, chargeEntryRequestBody, 20000, { 'Content-Type': 'application/json', token }, logFn);
-    // postJson returns the response body. To mirror the Java behavior, only return when successful (we are here because no error thrown)
-    try { if (logFn) logFn({ url, method: 'POST', status: 200, timestamp: new Date().toISOString() } as any); } catch (e) {}
-    // Return the raw response as string if possible to match Java's asString()
-    try { return typeof res === 'string' ? res : JSON.stringify(res); } catch (e) { return res; }
-  } catch (err: any) {
-    // Enhanced error logging
-    // suppressed error log
-    try {
-      const resp = err && err.response ? err.response : null;
-      if (resp) {
-        // suppressed response diagnostics
-      }
-    } catch (ee) {}
-    try { if (logFn) logFn({ url, method: 'POST', status: 'error', error: err && err.message ? err.message : String(err), timestamp: new Date().toISOString() } as any); } catch (e) {}
-    // Mirror Java behavior: log and return null on non-200 responses instead of throwing
-    return null;
-  }
+  // postJson logs the call (with the API error body on failure) and throws on non-2xx,
+  // so a failed charge entry now reaches the case result instead of being returned as null.
+  const res = await postJson(url, chargeEntryRequestBody, 20000, { 'Content-Type': 'application/json', token }, logFn);
+  // Return the raw response as string if possible to match Java's asString()
+  try { return typeof res === 'string' ? res : JSON.stringify(res); } catch (e) { return res; }
 }
 
 export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeResponse: any, options?: PerformPatientChargeEntryOptions) {
@@ -471,18 +448,26 @@ export async function performPatientChargeEntry(apiBaseUrl: string, casesToCodeR
     chargeEntries.push(chargeEntryObject);
   }
 
-  // call performChargeEntry
-  const chargeEntryResponse = await performChargeEntry(apiBaseUrl, chargeEntries, authToken, logFn);
-  // update case status to '12'
-  if (caseSummaryIdStr) {
-    try { await updateCaseStatus(apiBaseUrl, caseSummaryIdStr, '12', authToken, logFn); } catch (e) {}
+  // call performChargeEntry (throws with the API error on failure)
+  let chargeEntryResponse: any;
+  try {
+    chargeEntryResponse = await performChargeEntry(apiBaseUrl, chargeEntries, authToken, logFn);
+  } catch (e) {
+    throw new Error(`SavePerformedProcedure failed: ${describeApiError(e)}`);
   }
-  // store/get charge details
   const chargeDetailsStr = getChargeDetailsFromChargeEntryResp(chargeEntryResponse);
-  // call update and upsert again
+  // update case status to '12' (Ready for Bill) and upsert case summary info
   if (caseSummaryIdStr) {
-    try { await updateCaseStatus(apiBaseUrl, caseSummaryIdStr, '12', authToken, logFn); } catch (e) {}
-    try { await upsertCaseSummaryInfo(apiBaseUrl, caseSummaryIdStr, '12', '11', authToken, logFn); } catch (e) {}
+    try {
+      await updateCaseStatus(apiBaseUrl, caseSummaryIdStr, '12', authToken, logFn);
+    } catch (e) {
+      throw new Error(`UpdateCaseStatus(12 Ready for Bill) failed: ${describeApiError(e)}`);
+    }
+    try {
+      await upsertCaseSummaryInfo(apiBaseUrl, caseSummaryIdStr, '12', '11', authToken, logFn, options?.appointmentId);
+    } catch (e) {
+      throw new Error(`UpsertCaseSummaryInfo(12 Ready for Bill) failed: ${describeApiError(e)}`);
+    }
   }
 
   return { chargeEntryResponse, chargeDetails: chargeDetailsStr };

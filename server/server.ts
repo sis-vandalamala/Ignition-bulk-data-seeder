@@ -1,13 +1,14 @@
 import express from 'express';
 import path from 'path';
 import { loginUser, logoutUser } from './auth';
-import { setGlobalApiLogger } from '../src/utils/api';
+import { setGlobalApiLogger, describeApiError } from '../src/utils/api';
 import { postJson } from '../src/utils/api';
-import { createBasicPatients } from '../src/services/patient.service';
+import { createBasicPatients, CASE_STAGE_LABELS, isUsableAppointmentType } from '../src/services/patient.service';
 import { createInsurance, extractInsuranceInsertOverrides } from '../src/services/insurance.service';
 import type { InsuranceInsertOverrides } from '../src/services/insurance.service';
 import { getRoomsForOrganization, getAppointmentTypeNameAndID, getPhysicianNameAndID, getFeeSchedules, getPeriodBatches, getInsuranceCarriers, getGeneralLedgerAccounts } from '../src/services/support.service';
 import { createContracts } from '../src/services/contract.service';
+import { createCaseFlags, getCaseFlagColors } from '../src/services/caseFlag.service';
 import { createTransactionCodes } from '../src/services/transactionCode.service';
 
 const app = express();
@@ -59,210 +60,349 @@ app.post('/logout', (req, res) => {
 	res.json(logoutUser(token));
 });
 
-app.post('/seed', (req, res) => {
-	// Capture logs for this run and return them to the UI when complete
-	const token = (req.app.locals as any).token || (req.headers as any).token || null;
+// ---------------------------------------------------------------------------
+// Case seeding
+//
+// Each Workflow Action is the tracker the cases should land in. It decides how far the
+// per-case flow runs and whether insurance is attached (insured vs self-pay charges):
+//   Create Case -> [Financial Clearance] -> Discharge -> [Cases to Code] -> Code -> [Charge Entry]
+//   -> Charge Entry -> [Insurance Billing + Balance/Reconciliation] (insured) or [Patient Statements] (self-pay)
+// ---------------------------------------------------------------------------
+type TrackerTarget = { label: string; flowDepth: number; insurance: 'create' | 'none' | 'manual' };
+const TRACKER_TARGETS: Record<string, TrackerTarget> = {
+	financialClearance: { label: 'Financial Clearance Tracker', flowDepth: 0, insurance: 'create' },
+	casesToCodeTracker: { label: 'Cases to Code Tracker', flowDepth: 1, insurance: 'create' },
+	chargeEntryTracker: { label: 'Charge Entry Tracker', flowDepth: 2, insurance: 'create' },
+	insuranceBilling: { label: 'Insurance Billing Tracker', flowDepth: 3, insurance: 'create' },
+	balanceReconciliation: { label: 'Balance/Reconciliation Tracker', flowDepth: 3, insurance: 'create' },
+	patientStatements: { label: 'Patient Statements Tracker', flowDepth: 3, insurance: 'none' },
+	// legacy action names (older UI builds / scripts)
+	createBasicPatients: { label: 'Financial Clearance Tracker', flowDepth: 0, insurance: 'create' },
+	dischargeCases: { label: 'Cases to Code Tracker', flowDepth: 1, insurance: 'create' },
+	casesToCode: { label: 'Charge Entry Tracker', flowDepth: 2, insurance: 'create' },
+	chargeEntry: { label: 'Balance/Reconciliation Tracker', flowDepth: 3, insurance: 'create' },
+	patientStatementsTracker: { label: 'Patient Statements Tracker', flowDepth: 3, insurance: 'none' },
+};
+const MANUAL_DEPTH_TRACKER = ['Financial Clearance Tracker', 'Cases to Code Tracker', 'Charge Entry Tracker', 'Insurance Billing / Balance-Reconciliation Tracker'];
 
-	const logs: Array<any> = [];
-	const logger = (entry: any) => {
-		try { logs.push(entry); } catch (e) {}
+// Anesthesia Billing desktop trackers. Depth 1 = Verification Complete + Clinical Documentation (Performed),
+// which lands the case in the combined Coding/Charge Entry tracker. Anes coding/charge entry is not automated yet.
+const ANES_TRACKER_TARGETS: Record<string, TrackerTarget> = {
+	financialClearance: { label: 'Financial Clearance Tracker', flowDepth: 0, insurance: 'create' },
+	anesCodingChargeEntry: { label: 'Coding/Charge Entry Tracker', flowDepth: 1, insurance: 'create' },
+	createBasicPatients: { label: 'Financial Clearance Tracker', flowDepth: 0, insurance: 'create' },
+	casesToCodeTracker: { label: 'Coding/Charge Entry Tracker', flowDepth: 1, insurance: 'create' },
+	chargeEntryTracker: { label: 'Coding/Charge Entry Tracker', flowDepth: 1, insurance: 'create' },
+	dischargeCases: { label: 'Coding/Charge Entry Tracker', flowDepth: 1, insurance: 'create' },
+	casesToCode: { label: 'Coding/Charge Entry Tracker', flowDepth: 1, insurance: 'create' },
+};
+const ANES_MAX_DEPTH = 1;
+
+type SeedFailure = { index: number; patientName?: string; patientId?: number; caseSummaryId?: number; stage?: string; error: string };
+type SeedJob = {
+	runId: string;
+	status: 'running' | 'finished' | 'error';
+	targetTracker: string;
+	total: number;
+	completed: number;
+	passed: number;
+	failed: number;
+	inStage: Record<number, string>; // case index -> current stage label (in-flight cases only)
+	failures: SeedFailure[];
+	warnings: string[];
+	logs: any[];
+	startedAt: number;
+	finishedAt?: number;
+	error?: string;
+	response?: any; // final payload (same shape the UI used to get from POST /seed)
+};
+const seedJobs = new Map<string, SeedJob>();
+const MAX_KEPT_JOBS = 10;
+function rememberJob(job: SeedJob) {
+	seedJobs.set(job.runId, job);
+	while (seedJobs.size > MAX_KEPT_JOBS) {
+		const oldest = seedJobs.keys().next().value as string | undefined;
+		if (!oldest) break;
+		seedJobs.delete(oldest);
+	}
+}
+function runningJob() {
+	for (const j of seedJobs.values()) if (j.status === 'running') return j;
+	return undefined;
+}
+function compactResult(r: any) {
+	if (!r) return r;
+	return {
+		index: r.index,
+		status: r.status,
+		patientName: r.patientName,
+		patientId: r.patientId,
+		caseSummaryId: r.caseSummaryId,
+		completedStages: r.completedStages,
+		failedStage: r.failedStage,
+		failedStageLabel: r.failedStageLabel,
+		error: r.error,
+		warnings: r.warnings,
+		insertInsuranceError: r.insertInsuranceError,
 	};
+}
 
+app.post('/seed', (req, res) => {
+	const token = (req.app.locals as any).token || (req.headers as any).token || null;
+	const opts = req.body && req.body.opts ? req.body.opts : {};
+	const actionStr = String((opts && (opts as any).action) ? (opts as any).action : 'financialClearance');
+	const isAnes = !!(req.app.locals as any).isAnesthesiaBilling;
+	const isAuto = opts.mode === 'auto';
+	const target = isAnes ? ANES_TRACKER_TARGETS[actionStr] : TRACKER_TARGETS[actionStr];
+	if (!target) {
+		const msg = isAnes && TRACKER_TARGETS[actionStr]
+			? `"${TRACKER_TARGETS[actionStr].label}" is not supported for Anesthesia Billing orgs yet — Anes coding/charge entry is not automated. Choose Financial Clearance or Coding/Charge Entry.`
+			: `Unknown workflow action "${actionStr}"`;
+		return res.status(400).json({ ok: false, error: msg });
+	}
+	const busy = runningJob();
+	if (busy) return res.status(409).json({ ok: false, error: `A seed run is already in progress (${busy.completed}/${busy.total} cases done). Wait for it to finish.`, runId: busy.runId });
+
+	const requestedDepth = isAuto ? target.flowDepth : (typeof opts.flowDepth === 'number' ? opts.flowDepth : target.flowDepth);
+	const total = Math.max(1, Number(opts.count) || 1);
+	const runId = `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+	const job: SeedJob = {
+		runId,
+		status: 'running',
+		targetTracker: isAuto ? target.label : (isAnes
+			? (requestedDepth >= 1 ? 'Coding/Charge Entry Tracker' : 'Financial Clearance Tracker')
+			: (MANUAL_DEPTH_TRACKER[Math.max(0, Math.min(3, requestedDepth))] || target.label)),
+		total,
+		completed: 0,
+		passed: 0,
+		failed: 0,
+		inStage: {},
+		failures: [],
+		warnings: [],
+		logs: [],
+		startedAt: Date.now(),
+	};
+	if (!isAnes && !isAuto && requestedDepth >= 3) {
+		job.targetTracker = String(opts.insuranceType || '').toLowerCase() === 'create' ? 'Insurance Billing / Balance-Reconciliation Tracker' : 'Patient Statements Tracker';
+	}
+	if (isAnes && requestedDepth > ANES_MAX_DEPTH) {
+		job.warnings.push('Anesthesia Billing org: coding/charge entry is not automated yet, so cases stop in the Coding/Charge Entry tracker (verified + documented as Performed).');
+	}
+	rememberJob(job);
+	const logger = (entry: any) => { try { job.logs.push(entry); } catch (e) {} };
 	// set global logger so postJson calls anywhere will be captured
 	setGlobalApiLogger(logger);
+	// Respond right away; the UI polls GET /seed/status for live progress
+	res.json({ ok: true, runId, total, targetTracker: job.targetTracker, warnings: job.warnings });
 
-	// For now, parse opts and call appropriate action
 	(async () => {
+		const runStart = Date.now();
 		try {
-			const opts = req.body && req.body.opts ? req.body.opts : {};
-			const actionStr = String((opts && (opts as any).action) ? (opts as any).action : 'createBasicPatients');
-			const isAutoSeedAction = ['createBasicPatients','dischargeCases','casesToCode','chargeEntry','patientStatementsTracker'].includes(actionStr);
-			if (isAutoSeedAction) {
-				const runStart = Date.now();
-				// collect relevant headers from the incoming request to mimic UI behavior
-				const incoming = req.headers || {};
-				const extraHeaders: Record<string, string> = {};
-				const headerKeys = ['accept', 'content-type', 'origin', 'referer', 'user-agent', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform', 'priority'];
-				headerKeys.forEach(k => {
-					const v = (incoming as any)[k];
-					if (v) extraHeaders[k] = Array.isArray(v) ? v[0] : String(v);
-				});
-				// Only forward appointment type overrides if an ID is present
-				const hasApptId = typeof opts.appointmentTypeId === 'number' && !Number.isNaN(opts.appointmentTypeId);
-				// determine if physician override provided
-				const hasPhysId = typeof opts.physicianId === 'number' && !Number.isNaN(opts.physicianId);
-				let insuranceResult: any = null;
-				let insuranceResults: any[] | null = null;
-				let insuranceOverrides: InsuranceInsertOverrides | undefined;
-				let insuranceOverridesList: InsuranceInsertOverrides[] | undefined;
-				const shouldCreateInsurance = (opts.mode !== 'auto') && String(opts.insuranceType || '').toLowerCase() === 'create';
-				const actionLower = actionStr.toLowerCase();
-				const autoCreateInsurance = (opts.mode === 'auto') && actionLower !== 'patientstatementstracker';
-				if (autoCreateInsurance) {
-					// Auto mode: create a single insurance with random suffix and map to all cases
-					const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
-					const one = await createInsurance({
-						apiBaseUrl: opts.apiUrl || opts.url,
-						token,
-						suffix: rand,
-						timeoutMs: 60000,
-						extraHeaders,
-						logFn: logger,
-					});
-					insuranceResult = one;
-					insuranceOverrides = extractInsuranceInsertOverrides(one);
-				} else if (shouldCreateInsurance) {
-					if (!opts.suffix || !String(opts.suffix).trim()) throw new Error('Suffix is required to create insurance');
-					const pr: string = String(opts.insurancePriority || 'primary').toLowerCase();
-					const count = pr === 'p+s+t' ? 3 : (pr === 'p+s' ? 2 : 1);
-					insuranceResults = [];
-					for (let i = 1; i <= count; i += 1) {
-						const suffix = `${String(opts.suffix).trim()}v${i}`;
-						const one = await createInsurance({
-							apiBaseUrl: opts.apiUrl || opts.url,
-							token,
-							suffix,
-							timeoutMs: 60000,
-							extraHeaders,
-							logFn: logger,
-						});
-						insuranceResults.push(one);
-					}
-					// For backward-compat also expose the first result
-					insuranceResult = insuranceResults[0];
-					// Build overrides list for patient-insert mapping
-					insuranceOverridesList = insuranceResults.map(r => extractInsuranceInsertOverrides(r)).filter(Boolean) as InsuranceInsertOverrides[];
-					// Keep single override for legacy path
-					insuranceOverrides = insuranceOverridesList[0];
-								}
-								// Infer flow depth from action when not explicitly provided
-								let inferredFlowDepth: number | undefined = undefined;
-								if (actionLower) {
-									if (actionLower === 'createbasicpatients' || actionLower === 'createcase') inferredFlowDepth = 0;
-									else if (actionLower === 'dischargecases' || actionLower === 'discharge') inferredFlowDepth = 1;
-									else if (actionLower === 'casestocode') inferredFlowDepth = 2;
-									  else if (actionLower === 'chargeentry' || actionLower === 'patientstatementstracker') inferredFlowDepth = 3;
-								}
-								const svcRes = await createBasicPatients({
-					apiBaseUrl: opts.apiUrl || opts.url,
-					token,
-					isAnesthesiaBilling: !!(req.app.locals as any).isAnesthesiaBilling,
-					suffix: opts.suffix,
-					count: Number(opts.count) || 1,
-					concurrency: opts.concurrency,
-					facilityId: opts.facilityId,
-					roomIdOverride: opts.roomId,
-					roomNameOverride: opts.roomName,
-					appointmentTypeIdOverride: hasApptId ? opts.appointmentTypeId : undefined,
-					appointmentTypeNameOverride: hasApptId ? opts.appointmentTypeName : undefined,
+			// collect relevant headers from the incoming request to mimic UI behavior
+			const incoming = req.headers || {};
+			const extraHeaders: Record<string, string> = {};
+			const headerKeys = ['accept', 'content-type', 'origin', 'referer', 'user-agent', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform', 'priority'];
+			headerKeys.forEach(k => {
+				const v = (incoming as any)[k];
+				if (v) extraHeaders[k] = Array.isArray(v) ? v[0] : String(v);
+			});
+			// Only forward appointment type / physician overrides if an ID is present
+			const hasApptId = typeof opts.appointmentTypeId === 'number' && !Number.isNaN(opts.appointmentTypeId);
+			const hasPhysId = typeof opts.physicianId === 'number' && !Number.isNaN(opts.physicianId);
+			let insuranceResult: any = null;
+			let insuranceResults: any[] | null = null;
+			let insuranceOverrides: InsuranceInsertOverrides | undefined;
+			let insuranceOverridesList: InsuranceInsertOverrides[] | undefined;
+			const shouldCreateInsurance = !isAuto && String(opts.insuranceType || '').toLowerCase() === 'create';
+			const autoCreateInsurance = isAuto && target.insurance === 'create';
+			if (autoCreateInsurance) {
+				// Auto mode: create a single insurance with random suffix and map to all cases
+				const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
+				const one = await createInsurance({ apiBaseUrl: opts.apiUrl || opts.url, token, suffix: rand, timeoutMs: 60000, extraHeaders, logFn: logger });
+				insuranceResult = one;
+				insuranceOverrides = extractInsuranceInsertOverrides(one);
+			} else if (shouldCreateInsurance) {
+				if (!opts.suffix || !String(opts.suffix).trim()) throw new Error('Suffix is required to create insurance');
+				const pr: string = String(opts.insurancePriority || 'primary').toLowerCase();
+				const count = pr === 'p+s+t' ? 3 : (pr === 'p+s' ? 2 : 1);
+				insuranceResults = [];
+				for (let i = 1; i <= count; i += 1) {
+					const suffix = `${String(opts.suffix).trim()}v${i}`;
+					const one = await createInsurance({ apiBaseUrl: opts.apiUrl || opts.url, token, suffix, timeoutMs: 60000, extraHeaders, logFn: logger });
+					insuranceResults.push(one);
+				}
+				insuranceResult = insuranceResults[0];
+				insuranceOverridesList = insuranceResults.map(r => extractInsuranceInsertOverrides(r)).filter(Boolean) as InsuranceInsertOverrides[];
+				insuranceOverrides = insuranceOverridesList[0];
+			}
+			const svcRes: any = await createBasicPatients({
+				apiBaseUrl: opts.apiUrl || opts.url,
+				token,
+				isAnesthesiaBilling: isAnes,
+				suffix: opts.suffix,
+				count: total,
+				concurrency: opts.concurrency,
+				facilityId: opts.facilityId,
+				roomIdOverride: opts.roomId,
+				roomNameOverride: opts.roomName,
+				appointmentTypeIdOverride: hasApptId ? opts.appointmentTypeId : undefined,
+				appointmentTypeNameOverride: hasApptId ? opts.appointmentTypeName : undefined,
 				physicianIdOverride: hasPhysId ? opts.physicianId : undefined,
 				physicianNameOverride: hasPhysId ? opts.physician : undefined,
 				feeScheduleOverride: opts.feeScheduleOverride,
 				// forward CPT amounts mapping from UI so charge entry can use per-code amounts
 				cptAmounts: opts.cptAmounts,
 				dos: opts.dos,
-					logFn: logger,
-					extraHeaders,
-					username: opts.username,
-					// Anes Billing: only case creation is supported for now (skip discharge / coding / charge entry)
-					flowDepth: (req.app.locals as any).isAnesthesiaBilling ? 0 : (typeof opts.flowDepth === 'number' ? opts.flowDepth : inferredFlowDepth),
-					mode: opts.mode,
-					periodBatchMode: opts.mode === 'auto' ? 'auto' : (opts.periodBatch as 'select' | 'create' | undefined),
-					selectedPeriodId: typeof opts.periodId !== 'undefined' ? Number(opts.periodId) : undefined,
-					selectedBatchId: typeof opts.batchId !== 'undefined' ? Number(opts.batchId) : undefined,
-					insuranceInsertOverrides: insuranceOverrides,
-					insuranceInsertOverridesList: insuranceOverridesList,
-					insuranceType: opts.mode === 'auto' ? (autoCreateInsurance ? 'create' : 'none') : opts.insuranceType,
-					insuranceCreateResult: insuranceResult || undefined,
-					insuranceCreateResults: insuranceResults || undefined,
-				});
-				const runElapsedMs = Date.now() - runStart;
-				return res.json({ ok: true, result: svcRes, insuranceResult, insuranceResults, tokenPresent: !!token, logs, runElapsedMs });
-			}
-
-			// fallback demo behavior
-			if (req.body && req.body.runDemoCalls && req.body.demoUrl) {
-				try { await postJson(req.body.demoUrl, { ping: true }, 10000, { token }, logger); } catch (e) {}
-			} else {
-				await new Promise(r => setTimeout(r, 500));
-			}
-
-			return res.json({ ok: true, message: 'seed run finished (stub)', tokenPresent: !!token, logs });
+				logFn: logger,
+				extraHeaders,
+				username: opts.username,
+				// Anes Billing: only case creation is supported for now (skip discharge / coding / charge entry)
+				flowDepth: isAnes ? Math.min(requestedDepth, ANES_MAX_DEPTH) : requestedDepth,
+				mode: opts.mode,
+				periodBatchMode: isAuto ? 'auto' : (opts.periodBatch as 'select' | 'create' | undefined),
+				selectedPeriodId: typeof opts.periodId !== 'undefined' ? Number(opts.periodId) : undefined,
+				selectedBatchId: typeof opts.batchId !== 'undefined' ? Number(opts.batchId) : undefined,
+				insuranceInsertOverrides: insuranceOverrides,
+				insuranceInsertOverridesList: insuranceOverridesList,
+				insuranceType: isAuto ? (autoCreateInsurance ? 'create' : 'none') : opts.insuranceType,
+				insuranceCreateResult: insuranceResult || undefined,
+				insuranceCreateResults: insuranceResults || undefined,
+				onCaseStage: (index, stage) => { job.inStage[index] = CASE_STAGE_LABELS[stage]; },
+				onCaseComplete: (r, totals) => {
+					delete job.inStage[r.index];
+					job.completed = totals.completed;
+					job.passed = totals.passed;
+					job.failed = totals.failed;
+					if (r.status === 'failed') {
+						job.failures.push({ index: r.index, patientName: r.patientName, patientId: r.patientId, caseSummaryId: r.caseSummaryId, stage: r.failedStageLabel, error: r.error || 'Unknown error' });
+					}
+				},
+			});
+			if (svcRes && svcRes.ok === false && svcRes.error && !Array.isArray(svcRes.results)) throw new Error(svcRes.error);
+			if (svcRes && Array.isArray(svcRes.warnings)) job.warnings.push(...svcRes.warnings);
+			const runElapsedMs = Date.now() - runStart;
+			job.status = 'finished';
+			job.finishedAt = Date.now();
+			job.response = {
+				ok: job.failed === 0,
+				targetTracker: job.targetTracker,
+				summary: svcRes ? svcRes.summary : undefined,
+				warnings: job.warnings,
+				result: { ok: svcRes ? svcRes.ok : false, results: (svcRes && Array.isArray(svcRes.results) ? svcRes.results : []).map(compactResult), lastPatientId: svcRes ? svcRes.lastPatientId : null },
+				insuranceResult,
+				insuranceResults,
+				tokenPresent: !!token,
+				runElapsedMs,
+			};
 		} catch (e: any) {
-			return res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e), logs });
+			job.status = 'error';
+			job.finishedAt = Date.now();
+			job.error = describeApiError(e);
+			// cases that never started count as failed so the totals still add up
+			const notRun = job.total - job.completed;
+			if (notRun > 0) job.failed += notRun;
+			job.response = { ok: false, error: job.error, targetTracker: job.targetTracker, warnings: job.warnings, runElapsedMs: Date.now() - runStart, tokenPresent: !!token };
 		} finally {
 			setGlobalApiLogger(undefined);
 		}
 	})();
 });
 
-app.post('/contracts', (req, res) => {
+// Live progress for a seed run. `logsFrom` lets the UI fetch only log entries it has not seen yet.
+app.get('/seed/status', (req, res) => {
+	const runId = String(req.query.runId || '');
+	const job = seedJobs.get(runId);
+	if (!job) return res.status(404).json({ ok: false, error: `Unknown runId "${runId}"`, finished: true });
+	const from = Math.max(0, Number(req.query.logsFrom) || 0);
+	const finished = job.status !== 'running';
+	const stageCounts: Record<string, number> = {};
+	Object.values(job.inStage).forEach((label) => { stageCounts[label] = (stageCounts[label] || 0) + 1; });
+	res.json(Object.assign({
+		runId: job.runId,
+		status: job.status,
+		finished,
+		targetTracker: job.targetTracker,
+		total: job.total,
+		completed: job.completed,
+		passed: job.passed,
+		failed: job.failed,
+		inProgress: Object.keys(job.inStage).length,
+		stageCounts,
+		failures: job.failures,
+		warnings: job.warnings,
+		error: job.error,
+		elapsedMs: (job.finishedAt || Date.now()) - job.startedAt,
+		logs: job.logs.slice(from),
+		logsFrom: from,
+		logsTotal: job.logs.length,
+	}, finished ? { final: job.response } : {}));
+});
+
+// Runs a configuration seeding job (contracts / transaction codes / case flags) and returns
+// per-item results with detailed errors. Log entries are emitted asynchronously, so flush them before replying.
+function runConfigJob(req: express.Request, res: express.Response, work: (ctx: { token: string; opts: any; logger: (e: any) => void }) => Promise<{ results: any[]; route?: string }>) {
 	const token = (req.app.locals as any).token || (req.headers as any).token || null;
-
 	const logs: Array<any> = [];
-	const logger = (entry: any) => {
-		try { logs.push(entry); } catch (e) {}
-	};
+	const logger = (entry: any) => { try { logs.push(entry); } catch (e) {} };
 	setGlobalApiLogger(logger);
-
 	(async () => {
+		const started = Date.now();
 		try {
 			const opts = req.body && req.body.opts ? req.body.opts : {};
-			const results = await createContracts({
-				apiBaseUrl: opts.apiUrl || opts.url,
-				token,
-				count: Number(opts.count) || 1,
-				isHybridContract: !!opts.isHybridContract,
-				contractType: opts.contractType,
-				pctBilledCharges: typeof opts.pctBilledCharges === 'number' ? opts.pctBilledCharges : undefined,
-				pctAllowed: typeof opts.pctAllowed === 'number' ? opts.pctAllowed : undefined,
-				effectiveDate: opts.effectiveDate,
-				expiryDate: opts.expiryDate,
-				notes: opts.notes,
-			});
-			const successCount = results.filter(r => r.ok).length;
+			const out = await work({ token, opts, logger });
+			await new Promise((r) => setImmediate(r));
+			const results = out.results || [];
+			const successCount = results.filter((r: any) => r.ok).length;
 			const failureCount = results.length - successCount;
-			return res.json({ ok: failureCount === 0, results, successCount, failureCount, tokenPresent: !!token, logs });
+			return res.json({ ok: failureCount === 0, results, successCount, failureCount, route: out.route, tokenPresent: !!token, logs, elapsedMs: Date.now() - started });
 		} catch (e: any) {
+			await new Promise((r) => setImmediate(r));
 			return res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e), logs });
 		} finally {
 			setGlobalApiLogger(undefined);
 		}
 	})();
-});
+}
 
-app.post('/transaction-codes', (req, res) => {
-	const token = (req.app.locals as any).token || (req.headers as any).token || null;
+app.post('/contracts', (req, res) => runConfigJob(req, res, ({ token, opts, logger }) => createContracts({
+	apiBaseUrl: opts.apiUrl || opts.url,
+	token,
+	mode: opts.mode,
+	count: Number(opts.count) || 1,
+	isHybridContract: !!opts.isHybridContract,
+	contractType: opts.contractType,
+	pctBilledCharges: typeof opts.pctBilledCharges === 'number' ? opts.pctBilledCharges : undefined,
+	pctAllowed: typeof opts.pctAllowed === 'number' ? opts.pctAllowed : undefined,
+	effectiveDate: opts.effectiveDate || undefined,
+	expiryDate: opts.expiryDate || undefined,
+	notes: opts.notes,
+	logFn: logger,
+})));
 
-	const logs: Array<any> = [];
-	const logger = (entry: any) => {
-		try { logs.push(entry); } catch (e) {}
-	};
-	setGlobalApiLogger(logger);
+app.post('/transaction-codes', (req, res) => runConfigJob(req, res, ({ token, opts, logger }) => createTransactionCodes({
+	apiBaseUrl: opts.apiUrl || opts.url,
+	token,
+	mode: opts.mode,
+	count: Number(opts.count) || 1,
+	type: opts.type,
+	toDebit: opts.toDebit,
+	toCredit: opts.toCredit,
+	logFn: logger,
+})));
 
-	(async () => {
-		try {
-			const opts = req.body && req.body.opts ? req.body.opts : {};
-			const results = await createTransactionCodes({
-				apiBaseUrl: opts.apiUrl || opts.url,
-				token,
-				count: Number(opts.count) || 1,
-				type: opts.type,
-				toDebit: opts.toDebit,
-				toCredit: opts.toCredit,
-			});
-			const successCount = results.filter(r => r.ok).length;
-			const failureCount = results.length - successCount;
-			return res.json({ ok: failureCount === 0, results, successCount, failureCount, tokenPresent: !!token, logs });
-		} catch (e: any) {
-			return res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e), logs });
-		} finally {
-			setGlobalApiLogger(undefined);
-		}
-	})();
-});
-
-// progress polling endpoint removed
+app.post('/case-flags', (req, res) => runConfigJob(req, res, ({ token, opts, logger }) => createCaseFlags({
+	apiBaseUrl: opts.apiUrl || opts.url,
+	token,
+	// the lock and the flags belong to the org the session is bound to
+	organizationId: Number((req.app.locals as any).orgId || opts.facilityId),
+	mode: opts.mode,
+	count: Number(opts.count) || 1,
+	flagName: opts.flagName,
+	abbreviation: opts.abbreviation,
+	color: opts.color,
+	visibility: opts.visibility,
+	logFn: logger,
+})));
 
 // Support data endpoint: fetch rooms, appointment types, physicians for given facility/org
 app.post('/support-data', async (req, res) => {
@@ -288,6 +428,10 @@ app.post('/support-data', async (req, res) => {
 
 				try {
 					appointmentTypes = await getAppointmentTypeNameAndID(token as any, apiUrl);
+					if (Array.isArray(appointmentTypes)) {
+						const usable = appointmentTypes.filter((a: any) => isUsableAppointmentType(a));
+						if (usable.length) appointmentTypes = usable;
+					}
 					// suppressed support-data appointmentTypes fetched log
 				} catch (e: any) { /* suppressed getAppointmentTypeNameAndID error */ }
 
@@ -322,6 +466,11 @@ app.post('/support-data', async (req, res) => {
 						(physicians as any).__insurances = ins;
 					} catch (e: any) { /* suppressed getInsuranceCarriers error */ }
 
+					let caseFlagColors: any = undefined;
+					try {
+						caseFlagColors = await getCaseFlagColors(apiUrl, token as any);
+					} catch (e: any) { /* suppressed getCaseFlagColors error */ }
+
 					let generalLedgerAccounts: any = undefined;
 					try {
 						// Fetch general ledger accounts (for Transaction Codes To Debit/To Credit dropdowns)
@@ -334,7 +483,7 @@ app.post('/support-data', async (req, res) => {
 					const periods = (physicians as any && (physicians as any).__periods) ? (physicians as any).__periods : undefined;
 					const batches = (physicians as any && (physicians as any).__batches) ? (physicians as any).__batches : undefined;
 					const insurances = (physicians as any && (physicians as any).__insurances) ? (physicians as any).__insurances : undefined;
-					return res.json({ ok: true, rooms, appointmentTypes, physicians, feeSchedule, periods, batches, insurances, generalLedgerAccounts, logs });
+					return res.json({ ok: true, rooms, appointmentTypes, physicians, feeSchedule, periods, batches, insurances, generalLedgerAccounts, caseFlagColors, logs });
 			} finally {
 				try { setGlobalApiLogger(undefined); } catch (e) {}
 			}

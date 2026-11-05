@@ -95,6 +95,7 @@
   const logFilter = document.getElementById('logFilter');
   const logClearBtn = document.getElementById('logClearBtn');
   const logAutoScroll = document.getElementById('logAutoScroll');
+  let isAnesOrg = false; // set after login from the org type
   const logBuffer = [];
   const LOG_BUFFER_LIMIT = 400;
   let isAuthenticated = false;
@@ -116,8 +117,19 @@
   }
   const elapsedEl = document.getElementById('elapsedDisplay');
   const runProgressFill = document.getElementById('runProgressFill');
+  const runProgressPassed = document.getElementById('runProgressPassed');
+  const runProgressFailed = document.getElementById('runProgressFailed');
   const runProgressLabel = document.getElementById('runProgressLabel');
   const runProgressWrap = document.getElementById('runProgressWrap');
+  const runTargetTracker = document.getElementById('runTargetTracker');
+  const rpCompleted = document.getElementById('rpCompleted');
+  const rpPassed = document.getElementById('rpPassed');
+  const rpFailed = document.getElementById('rpFailed');
+  const rpInProgress = document.getElementById('rpInProgress');
+  const rpStages = document.getElementById('rpStages');
+  const rpWarnings = document.getElementById('rpWarnings');
+  const rpFailuresWrap = document.getElementById('rpFailuresWrap');
+  const rpFailuresBody = document.getElementById('rpFailuresBody');
   const HIDDEN_CLASS = 'is-hidden';
 
   function setVisibility(el, visible, displayMode = 'block') {
@@ -223,6 +235,7 @@
       else if (v===2) txt = 'Through Cases-to-Code (no charge entry)';
       else txt = 'Full: Charge Entry';
       labelEl.textContent = txt;
+      try { if (typeof updateFlowTrackerHint === 'function') updateFlowTrackerHint(); } catch (e) {}
       try { labelEl.dataset.depth = String(v); } catch (e) {}
       try { inputEl.dataset.depth = String(v); } catch (e) {}
       try {
@@ -252,61 +265,124 @@
     }
     update();
   }
+  // Which tracker the cases land in for the selected manual workflow depth
+  function updateFlowTrackerHint(){
+    const el = document.getElementById('flowTrackerHint');
+    if (!el || !flowDepth) return;
+    const v = Number(flowDepth.value);
+    let tracker;
+    if (isAnesOrg) {
+      el.textContent = v === 0
+        ? 'Cases will land in: Financial Clearance Tracker'
+        : 'Anes Billing: cases are verified + documented and land in the Coding/Charge Entry Tracker (Anes coding/charge entry is not automated yet).';
+      return;
+    }
+    if (v === 0) tracker = 'Financial Clearance Tracker';
+    else if (v === 1) tracker = 'Cases to Code Tracker';
+    else if (v === 2) tracker = 'Charge Entry Tracker';
+    else {
+      const ins = document.querySelector('input[name="insuranceType"]:checked');
+      tracker = ins && ins.value === 'create' ? 'Insurance Billing + Balance/Reconciliation Trackers' : 'Patient Statements Tracker (self-pay — select Insurance "Create" for Insurance Billing)';
+    }
+    el.textContent = `Cases will land in: ${tracker}`;
+  }
   initFlowDepthControls(flowDepth, flowDepthLabel, flowSteps);
+  try {
+    document.querySelectorAll('input[name="insuranceType"]').forEach(r => r.addEventListener('change', updateFlowTrackerHint));
+    updateFlowTrackerHint();
+  } catch (e) {}
+  // Target tracker lists differ by org type (clinical facility vs Anesthesia Billing desktop)
+  const CLINICAL_TRACKER_OPTIONS = autoActionSelect ? autoActionSelect.innerHTML : '';
+  const ANES_TRACKER_OPTIONS = [
+    '<option value="financialClearance">Financial Clearance Tracker</option>',
+    '<option value="anesCodingChargeEntry">Coding/Charge Entry Tracker</option>',
+    '<option value="insuranceBilling" disabled>Insurance Billing Tracker (not supported yet for Anes Billing)</option>',
+    '<option value="patientStatements" disabled>Patient Statements Tracker (not supported yet for Anes Billing)</option>',
+    '<option value="balanceReconciliation" disabled>Balance/Reconciliation Tracker (not supported yet for Anes Billing)</option>',
+    '<option value="remittancePosting" disabled>Remittance Posting Tracker (not supported yet)</option>',
+  ].join('');
+  function applyOrgTrackers(anes) {
+    isAnesOrg = !!anes;
+    if (autoActionSelect) {
+      autoActionSelect.innerHTML = isAnesOrg ? ANES_TRACKER_OPTIONS : CLINICAL_TRACKER_OPTIONS;
+      autoActionSelect.selectedIndex = 0;
+    }
+    try { updateAutoActionHint(); } catch (e) {}
+    try { updateFlowTrackerHint(); } catch (e) {}
+  }
+  // Auto mode: describe what each target tracker does
+  const AUTO_TRACKER_HINTS = {
+    anesCodingChargeEntry: 'Anes Billing: creates the case, marks Verification Complete and documents it as Performed (anesthesia/operative times).',
+    financialClearance: 'Creates patient + case (with insurance). Case stays Scheduled.',
+    casesToCodeTracker: 'Creates the case and discharges it (status Performed).',
+    chargeEntryTracker: 'Creates, discharges and codes the case (status Ready to Charge).',
+    insuranceBilling: 'Full flow with insurance: create → discharge → code → charge entry (Ready for Bill).',
+    patientStatements: 'Full flow without insurance (self-pay): create → discharge → code → charge entry.',
+    balanceReconciliation: 'Full flow with insurance through charge entry; charges appear in Balance/Reconciliation.',
+  };
+  function updateAutoActionHint(){
+    const el = document.getElementById('autoActionHint');
+    if (el && autoActionSelect) el.textContent = AUTO_TRACKER_HINTS[autoActionSelect.value] || '';
+  }
+  if (autoActionSelect) { autoActionSelect.addEventListener('change', updateAutoActionHint); updateAutoActionHint(); }
   // Auto mode uses an action select instead of a flow depth slider
 
-  function createProgressController(parts = {}){
-    const { wrap, fill, label } = parts;
-    let timer = null;
-    let pct = 0;
-    let finalized = false;
-    const clamp = (val) => Math.max(0, Math.min(100, Number(val) || 0));
-    return {
-      show(){ setVisibility(wrap, true, 'flex'); },
-      hide(){ setVisibility(wrap, false, 'flex'); },
-      reset(text){
-        this.stop();
-        finalized = false;
-        this.setPercent(0, text || 'Idle');
-      },
-      setPercent(value, text){
-        pct = clamp(value);
-        if (fill) fill.style.width = pct + '%';
-        if (!finalized && label) label.textContent = text || (pct === 0 ? 'Idle' : `${pct}%`);
-      },
-      animate(){
-        this.stop();
-        let v = 0;
-        timer = setInterval(() => {
-          v = (v + 7) % 100;
-          this.setPercent(v, 'Running...');
-        }, 250);
-      },
-      stop(){
-        if (timer) clearInterval(timer);
-        timer = null;
-      },
-      setStatus(result, pctOverride){
-        if (!label) return;
-        const effective = clamp(typeof pctOverride === 'number' ? pctOverride : pct);
-        if (result === 'pass') {
-          finalized = true;
-          label.textContent = `${effective}% · Successful`;
-        } else if (result === 'fail') {
-          finalized = true;
-          label.textContent = `${effective}% · Failed`;
-        } else {
-          finalized = false;
-          label.textContent = `${effective}%`;
-        }
-      },
-      getPercent(){ return pct; }
-    };
-  }
-
-  const progressControllers = {
-    manual: createProgressController({ wrap: runProgressWrap, fill: runProgressFill, label: runProgressLabel }),
-    auto: createProgressController({ wrap: runProgressWrap, fill: runProgressFill, label: runProgressLabel })
+  // Run progress card: driven by real case counts from GET /seed/status (no fake animation)
+  const runProgress = {
+    reset(totalCount, trackerLabel){
+      setVisibility(runProgressWrap, true, 'block');
+      if (runTargetTracker) runTargetTracker.textContent = trackerLabel ? `Target: ${trackerLabel}` : '';
+      this.update({ total: totalCount || 0, completed: 0, passed: 0, failed: 0, inProgress: 0, stageCounts: {}, failures: [], warnings: [] });
+      if (runProgressLabel) runProgressLabel.textContent = 'Starting…';
+    },
+    update(st){
+      const total = Math.max(1, Number(st.total) || 0);
+      const passed = Number(st.passed) || 0;
+      const failed = Number(st.failed) || 0;
+      const completed = Number(st.completed) || 0;
+      const inProgress = Number(st.inProgress) || 0;
+      const pct = (n) => Math.min(100, (n / total) * 100) + '%';
+      if (runProgressPassed) runProgressPassed.style.width = pct(passed);
+      if (runProgressFailed) runProgressFailed.style.width = pct(failed);
+      if (runProgressFill) runProgressFill.style.width = pct(inProgress);
+      if (rpCompleted) rpCompleted.textContent = `${completed}/${st.total || 0}`;
+      if (rpPassed) rpPassed.textContent = String(passed);
+      if (rpFailed) rpFailed.textContent = String(failed);
+      if (rpInProgress) rpInProgress.textContent = String(inProgress);
+      if (runProgressLabel) runProgressLabel.textContent = `${Math.round((completed / total) * 100)}% · ${completed} of ${st.total || 0} cases done`;
+      if (rpStages) {
+        const parts = Object.entries(st.stageCounts || {}).map(([k, v]) => `${k}: ${v}`);
+        rpStages.textContent = parts.length ? `Now running — ${parts.join(' · ')}` : '';
+      }
+      this.renderWarnings(st.warnings || []);
+      this.renderFailures(st.failures || []);
+    },
+    renderWarnings(list){
+      if (!rpWarnings) return;
+      setVisibility(rpWarnings, list.length > 0, 'block');
+      rpWarnings.innerHTML = list.map(w => `<div>⚠ ${escapeHtml(w)}</div>`).join('');
+    },
+    renderFailures(list){
+      if (!rpFailuresWrap || !rpFailuresBody) return;
+      setVisibility(rpFailuresWrap, list.length > 0, 'block');
+      rpFailuresBody.innerHTML = list.slice().sort((a, b) => a.index - b.index).map(f => `
+        <tr>
+          <td>${escapeHtml(f.index)}</td>
+          <td>${escapeHtml(f.patientName || '')}${f.patientId ? `<div class="muted">ID ${escapeHtml(f.patientId)}</div>` : ''}</td>
+          <td>${f.caseSummaryId ? escapeHtml(f.caseSummaryId) : '—'}</td>
+          <td>${escapeHtml(f.stage || '')}</td>
+          <td class="err">${escapeHtml(f.error || '')}</td>
+        </tr>`).join('');
+    },
+    finish(st, errorText){
+      this.update(st);
+      if (rpStages) rpStages.textContent = '';
+      if (runProgressFill) runProgressFill.style.width = '0%';
+      if (!runProgressLabel) return;
+      if (errorText) runProgressLabel.textContent = `Run failed · ${st.passed || 0} passed · ${st.failed || 0} failed`;
+      else if (!st.failed) runProgressLabel.textContent = `Completed · all ${st.passed || 0} passed`;
+      else runProgressLabel.textContent = `Completed · ${st.passed || 0} passed · ${st.failed || 0} failed`;
+    }
   };
 
   let token = null;
@@ -335,7 +411,7 @@
       tr.innerHTML = `
         <td style=\"padding:6px 8px;color:#cbd5e1;white-space:nowrap\">${r.time}</td>
         <td style=\"padding:6px 8px;color:#a5b4fc;white-space:nowrap\">${r.method}</td>
-        <td style=\"padding:6px 8px;color:#e6eef8;max-width:560px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\" title=\"${r.url}\">${r.url}</td>
+        <td style=\"padding:6px 8px;color:#e6eef8;max-width:560px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\" title=\"${escapeHtml(r.url)}\">${escapeHtml(r.url)}${r.error ? `<div class=\"log-err\">${escapeHtml(String(r.error).slice(0, 600))}</div>` : ''}</td>
         <td style=\"padding:6px 8px;color:${statusColor};white-space:nowrap\" title=\"${escapeHtml(r.error || '')}\">${r.status}</td>
         <td style=\"padding:6px 8px;text-align:right;color:#cbd5e1;white-space:nowrap\">${r.duration}</td>
       `;
@@ -384,219 +460,91 @@
     if (selectEl.options && selectEl.options.length) selectEl.selectedIndex = 0;
   }
 
-  // Polling helper: when server returns a runId, poll /seed/status?runId=... for incremental logs
-  async function pollRunStatus(runId, opts = {}) {
-    const intervalMs = opts.intervalMs || 1000;
-    const maxPolls = opts.maxPolls || 300; // 5 minutes default
-    let polls = 0;
-    let finished = false;
-    let lastCount = 0;
-    const progressCtrl = opts.progressCtrl;
-    const totalCount = Number(opts.totalCount) || 1;
-    while (!finished && polls < maxPolls) {
-      polls += 1;
+  function pushApiLogs(logs){
+    if (!Array.isArray(logs) || !logs.length) return;
+    // logs arrive oldest-first; the table shows newest on top
+    logs.forEach(l => {
       try {
-        const q = '/seed/status?runId=' + encodeURIComponent(runId);
-        const res = await fetch(q, { method: 'GET', headers: { 'token': token || '' } });
-        let j2 = null;
-        try { j2 = await res.json(); } catch (e) { j2 = null; }
-        if (!j2) {
-          await new Promise(r => setTimeout(r, intervalMs));
-          continue;
-        }
-        // merge any new logs
-        try {
-          if (Array.isArray(j2.logs) && j2.logs.length) {
-            // assume server returns logs in chronological order; add newest to front
-            const newLogs = j2.logs.slice(lastCount);
-            if (newLogs.length) {
-              // insert each new log at front so recent entries show on top (consistent with existing UI)
-              for (let i = newLogs.length - 1; i >= 0; i--) {
-                const l = newLogs[i];
-                const when = formatTime(l.startTime || l.timestamp);
-                const status = l.status || (l.error ? 'error' : 'unknown');
-                const dur = Number(l.durationMs || 0);
-                const dsec = (dur/1000).toFixed(2) + 's';
-                pushLogEntry({ time: when, method: l.method || 'GET', url: l.url || '', status, duration: dsec, error: l.error });
-              }
-              renderTable();
-            }
-            lastCount = j2.logs.length;
-          }
-        } catch (e) { /* ignore merge errors */ }
+        const when = formatTime(l.startTime || l.timestamp);
+        const status = l.status || (l.error ? 'error' : 'unknown');
+        const dsec = (Number(l.durationMs || 0) / 1000).toFixed(2) + 's';
+        pushLogEntry({ time: when, method: l.method || '-', url: l.url || '', status, duration: dsec, error: l.error });
+      } catch (e) { /* ignore per-log parse error */ }
+    });
+    renderTable();
+  }
 
-        // update percent if provided
-        try {
-          if (progressCtrl && typeof j2.completedCount === 'number') {
-            const done = Number(j2.completedCount || 0);
-            const pct = Math.round(Math.min(100, (done / Math.max(1, totalCount)) * 100));
-            progressCtrl.setPercent(pct, `${pct}%`);
-          } else if (progressCtrl && typeof j2.percent === 'number') {
-            progressCtrl.setPercent(j2.percent, `${Math.round(j2.percent)}%`);
-          }
-        } catch (e) {}
-
-        // check finished
-        if (j2.finished || j2.ok || j2.status === 'finished' || j2.completed) {
-          finished = true;
-          // return final combined object (prefer j2 but include runId)
-          return Object.assign({}, j2, { runId });
-        }
+  // Poll GET /seed/status until the run finishes, streaming logs and case counts into the UI
+  async function pollRunStatus(runId, totalCount) {
+    let logsFrom = 0;
+    let consecutiveErrors = 0;
+    while (true) {
+      let st = null;
+      try {
+        const res = await fetch('/seed/status?runId=' + encodeURIComponent(runId) + '&logsFrom=' + logsFrom, { headers: { 'token': token || '' } });
+        st = await res.json();
+        consecutiveErrors = 0;
       } catch (e) {
-        // ignore transient network errors and retry
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= 10) throw new Error('Lost connection to the seeder server while the run was in progress.');
       }
-      await new Promise(r => setTimeout(r, intervalMs));
+      if (st) {
+        if (st.ok === false && st.error && !st.runId) throw new Error(st.error);
+        pushApiLogs(st.logs);
+        if (typeof st.logsTotal === 'number') logsFrom = st.logsTotal;
+        if (elapsedEl && typeof st.elapsedMs === 'number') elapsedEl.textContent = `Total: ${(st.elapsedMs / 1000).toFixed(2)}s`;
+        if (st.finished) return st;
+        runProgress.update(Object.assign({ total: totalCount }, st));
+      }
+      await new Promise(r => setTimeout(r, 1000));
     }
-    // timed out; return empty object with runId
-    return { runId, ok: false, finished: false };
   }
 
   // Shows a rotating spinner on the Run buttons (and disables them) while a seed run is in flight
-  async function executeSeedRun(args) {
+  async function executeSeedRun({ payload, totalCount }) {
     const buttons = [runBtn, autoRunBtn].filter(Boolean);
     buttons.forEach((b) => { b.classList.add('is-loading'); b.disabled = true; });
-    try {
-      const resp = await executeSeedRunInner(args);
-      notifySeedResult(resp, Number(args && args.totalCount) || undefined);
-      return resp;
-    } catch (e) {
-      showToast('error', 'Run failed: ' + (e && e.message ? e.message : String(e)));
-    } finally {
-      buttons.forEach((b) => { b.classList.remove('is-loading'); b.disabled = false; });
-    }
-  }
-
-  async function executeSeedRunInner({ payload, progressCtrl, totalCount }) {
-    const ctrl = progressCtrl || progressControllers.manual;
     const targetTotal = Number(totalCount) || Number(payload?.opts?.count) || 1;
     try { if (logoEl) logoEl.classList.add('running'); } catch (e) {}
     try { if (elapsedEl) elapsedEl.textContent = 'Total: 0.00s'; } catch (e) {}
-    if (ctrl) {
-      ctrl.show();
-      ctrl.reset('Starting...');
-    }
-    log('Sending seed request: ' + JSON.stringify(payload));
-    if (ctrl) ctrl.animate();
-    let j = null;
+    runProgress.reset(targetTotal, '');
     try {
-      const res = await fetch('/seed', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
-      try { j = await res.json(); } catch (e) { j = { ok: false, error: 'invalid-json' }; }
-    } catch (e) {
-      j = { ok: false, error: String(e) };
-    }
-    if (ctrl) ctrl.stop();
-    try { if (logoEl) logoEl.classList.remove('running'); } catch (e) {}
-    log('Seed response: ' + JSON.stringify(j));
-    let finalResp = j;
-    try {
-      if (j && j.runId) {
-        const polled = await pollRunStatus(j.runId, { intervalMs: 800, maxPolls: 900, progressCtrl: ctrl, totalCount: targetTotal });
-        if (polled && typeof polled === 'object') {
-          finalResp = Object.assign({}, j, polled);
-        }
+      log('Sending seed request: ' + JSON.stringify(Object.assign({}, payload, { opts: Object.assign({}, payload.opts, { password: payload.opts && payload.opts.password ? '***' : undefined }) })));
+      let start = null;
+      try {
+        const res = await fetch('/seed', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
+        try { start = await res.json(); } catch (e) { start = { ok: false, error: `Server returned HTTP ${res.status} with an invalid response` }; }
+      } catch (e) {
+        start = { ok: false, error: 'Could not reach the seeder server: ' + (e && e.message ? e.message : String(e)) };
       }
-            if (sup.periods && Array.isArray(sup.periods) && periodSelect) {
-              try {
-                periodSelect.innerHTML = sup.periods.map(p => `<option value="${p.id ?? p.periodId ?? p.value}">${p.name ?? p.label ?? JSON.stringify(p)}</option>`).join('');
-                if (periodSelect.options && periodSelect.options.length) periodSelect.selectedIndex = 0;
-              } catch (e) { /* ignore */ }
-            }
-            if (sup.batches && Array.isArray(sup.batches) && batchSelect) {
-              try {
-                batchSelect.innerHTML = sup.batches.map(b => `<option value="${b.id ?? b.batchId ?? b.value}">${b.name ?? b.label ?? JSON.stringify(b)}</option>`).join('');
-                if (batchSelect.options && batchSelect.options.length) batchSelect.selectedIndex = 0;
-              } catch (e) { /* ignore */ }
-            }
-    } catch (e) {
-      // ignore polling errors and fall back to original response
-    }
-
-    try {
-      if (elapsedEl && finalResp) {
-        if (typeof finalResp.runElapsedMs === 'number') {
-          const s = (finalResp.runElapsedMs/1000).toFixed(2);
-          elapsedEl.textContent = `Total: ${s}s`;
-        } else if (Array.isArray(finalResp.logs) && finalResp.logs.length) {
-          let sumMs = 0;
-          let minStart = Number.MAX_SAFE_INTEGER;
-          let maxEnd = 0;
-          finalResp.logs.forEach(it => {
-            const d = Number(it.durationMs) || 0;
-            sumMs += d;
-            const ts = it.timestamp ? Date.parse(it.timestamp) : NaN;
-            if (!Number.isNaN(ts)) {
-              minStart = Math.min(minStart, ts);
-              maxEnd = Math.max(maxEnd, ts + d);
-            }
-          });
-          const wallMs = (minStart === Number.MAX_SAFE_INTEGER) ? sumMs : Math.max(0, maxEnd - minStart);
-          const wallS = (wallMs / 1000).toFixed(2);
-          const sumS = (sumMs / 1000).toFixed(2);
-          elapsedEl.textContent = `Wall: ${wallS}s · Sum: ${sumS}s`;
-        }
-      }
-    } catch (e) { log('elapsed calc error'); }
-
-    try {
-      if (finalResp && Array.isArray(finalResp.logs)) {
-        log('--- API Call Logs ---');
-        finalResp.logs.forEach(l => {
-          try {
-            const when = formatTime(l.startTime || l.timestamp);
-            const status = l.status || (l.error ? 'error' : 'unknown');
-            const dur = Number(l.durationMs || 0);
-            const dsec = (dur/1000).toFixed(2)+'s';
-            pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
-          } catch (e) { /* ignore per-log parse error */ }
-        });
-        if (finalResp.ok === false && finalResp.error) {
-          pushLogEntry({ time: formatTime(new Date().toISOString()), method: '-', url: 'Seed run', status: 'error', duration: '', error: finalResp.error });
-        }
-        let failureCount = 0;
-        try {
-          const total = targetTotal || (finalResp.logs.length || 1);
-          failureCount = (finalResp.logs || []).reduce((acc, it) => {
-            try {
-              const st = it.status || (it.error ? 'error' : undefined);
-              if (st === undefined || st === null) return acc;
-              if (typeof st === 'number') return acc + (st >= 400 ? 1 : 0);
-              const s = String(st).toLowerCase().trim();
-              if (s === 'error') return acc + 1;
-              if (/^\d+$/.test(s)) return acc + (Number(s) >= 400 ? 1 : 0);
-              if (s.startsWith('4') || s.startsWith('5')) return acc + 1;
-              return acc;
-            } catch (e) { return acc; }
-          }, 0);
-          const done = (finalResp._completedCount != null) ? Number(finalResp._completedCount) : (finalResp.logs.length || 0);
-          const pct = Math.round(Math.min(100, (done / Math.max(1,total)) * 100));
-          if (ctrl) ctrl.setPercent(pct, `${pct}%`);
-        } catch (e) { /* ignore progress calc error */ }
+      if (!start || !start.ok || !start.runId) {
+        const msg = (start && start.error) || 'Seed run could not be started.';
+        runProgress.finish({ total: targetTotal, completed: 0, passed: 0, failed: 0, warnings: [] }, msg);
+        pushLogEntry({ time: formatTime(new Date().toISOString()), method: '-', url: 'Seed run', status: 'error', duration: '', error: msg });
         renderTable();
-        if (ctrl) {
-          if (failureCount > 0) {
-            ctrl.setPercent(100, 'Completed');
-            ctrl.setStatus('fail', ctrl.getPercent());
-          } else if (finalResp && finalResp.ok) {
-            ctrl.setPercent(100, 'Completed');
-            ctrl.setStatus('pass', 100);
-          } else {
-            ctrl.setPercent(100, 'Completed');
-            ctrl.setStatus('fail', 100);
-          }
-        }
-      } else if (ctrl) {
-        if (finalResp && finalResp.ok) {
-          ctrl.setPercent(100, 'Completed');
-          ctrl.setStatus('pass', 100);
-        } else {
-          ctrl.setPercent(100, 'Completed');
-          ctrl.setStatus('fail', 100);
-        }
+        showToast('error', msg);
+        return start;
       }
+      if (runTargetTracker && start.targetTracker) runTargetTracker.textContent = `Target: ${start.targetTracker}`;
+      const st = await pollRunStatus(start.runId, start.total || targetTotal);
+      const final = st.final || {};
+      const errText = st.error || final.error;
+      runProgress.finish(st, errText);
+      if (errText) {
+        pushLogEntry({ time: formatTime(new Date().toISOString()), method: '-', url: 'Seed run', status: 'error', duration: '', error: errText });
+        renderTable();
+      }
+      notifySeedResult(st);
+      log('Seed run finished: ' + JSON.stringify({ runId: st.runId, total: st.total, passed: st.passed, failed: st.failed, error: errText }));
+      return st;
     } catch (e) {
-      if (ctrl) ctrl.setStatus('fail', ctrl.getPercent());
+      const msg = 'Run failed: ' + (e && e.message ? e.message : String(e));
+      runProgress.finish({ total: targetTotal, completed: 0, passed: 0, failed: 0 }, msg);
+      showToast('error', msg);
+    } finally {
+      try { if (logoEl) logoEl.classList.remove('running'); } catch (e) {}
+      buttons.forEach((b) => { b.classList.remove('is-loading'); b.disabled = false; });
     }
-    return finalResp;
   }
 
   // Toast notifications -------------------------------------------------
@@ -622,22 +570,22 @@
     } catch (e) {}
   }
 
-  // Summarise a /seed response into a toast
-  function notifySeedResult(resp, requestedCount) {
-    if (!resp) { showToast('error', 'Run failed: no response from server.'); return; }
-    const results = (resp.result && Array.isArray(resp.result.results)) ? resp.result.results : [];
-    const failed = results.filter((o) => !o || o.error || (o.caseSummaryResponse && o.caseSummaryResponse.error));
-    const created = results.length - failed.length;
-    const firstError = (failed.map((o) => o && (o.error || (o.caseSummaryResponse && o.caseSummaryResponse.error))).find(Boolean))
-      || (resp.result && resp.result.error) || resp.error;
-    const errText = firstError ? (typeof firstError === 'string' ? firstError : JSON.stringify(firstError)) : '';
-    if (resp.ok && failed.length === 0) {
-      const n = results.length || requestedCount || 0;
-      showToast('success', `${n} case${n === 1 ? '' : 's'} created successfully.`);
-    } else if (created > 0) {
-      showToast('error', `${created} case${created === 1 ? '' : 's'} created, ${failed.length} failed.${errText ? ' ' + errText : ''}`);
+  // Summarise a finished run into a toast
+  function notifySeedResult(st) {
+    if (!st) { showToast('error', 'Run failed: no response from server.'); return; }
+    const passed = Number(st.passed) || 0;
+    const failed = Number(st.failed) || 0;
+    const total = Number(st.total) || (passed + failed);
+    const errText = st.error || (st.final && st.final.error);
+    const firstFailure = Array.isArray(st.failures) && st.failures.length ? st.failures[0] : null;
+    const where = st.targetTracker ? ` (${st.targetTracker})` : '';
+    if (errText) {
+      showToast('error', `Run failed: ${errText}${passed ? ` — ${passed} case${passed === 1 ? '' : 's'} passed before the error.` : ''}`);
+    } else if (failed === 0) {
+      showToast('success', `${passed} of ${total} case${total === 1 ? '' : 's'} passed${where}.`);
     } else {
-      showToast('error', `Run failed.${errText ? ' ' + errText : ' Check the Output Log for details.'}`);
+      const firstMsg = firstFailure ? ` First error (case #${firstFailure.index}): ${firstFailure.error}` : '';
+      showToast('error', `${passed} passed, ${failed} failed of ${total}. See "Failed cases" for details.${firstMsg}`);
     }
   }
 
@@ -1019,6 +967,7 @@
     if (j && j.ok && j.token) {
       token = j.token;
       isAuthenticated = true;
+      try { applyOrgTrackers(!!j.isAnesthesiaBilling); } catch (e) {}
       if (logoutBtn) { logoutBtn.classList.remove('is-hidden'); }
       // Auto-collapse body, keep header visible
       try {
@@ -1187,6 +1136,12 @@
                 if (transactionCodeToCredit) transactionCodeToCredit.innerHTML = glaOptions;
               }
             } catch (e) { /* ignore general ledger accounts populate errors */ }
+            try {
+              if (caseFlagColor && Array.isArray(sup.caseFlagColors) && sup.caseFlagColors.length) {
+                caseFlagColor.innerHTML = sup.caseFlagColors.map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('');
+                caseFlagColor.selectedIndex = 0;
+              }
+            } catch (e) { /* ignore case flag colors populate errors */ }
           } catch (e) { /* ignore populate support selects error */ }
           try {
             if (sup && Array.isArray(sup.logs)) {
@@ -1246,7 +1201,7 @@
     autoRunBtn.addEventListener('click', async () => {
       const payload = {
         opts: {
-          action: autoActionSelect ? autoActionSelect.value : 'createBasicPatients',
+          action: autoActionSelect ? autoActionSelect.value : 'financialClearance',
           mode: 'auto',
           count: Number(autoCount && autoCount.value ? autoCount.value : 1) || 1,
           concurrency: Number(autoConcurrency && autoConcurrency.value ? autoConcurrency.value : 0) || undefined,
@@ -1258,10 +1213,54 @@
       };
       await executeSeedRun({
         payload,
-        progressCtrl: progressControllers.auto,
         totalCount: Number(autoCount && autoCount.value ? autoCount.value : 1) || 1
       });
     });
+  }
+
+  // Contracts / Transaction Codes / Case Flags: show counts plus every failed item with its error
+  function renderConfigResult(statusEl, j, total, noun) {
+    try { if (j && Array.isArray(j.logs)) pushApiLogs(j.logs); } catch (e) {}
+    if (!statusEl) return;
+    let details = statusEl.nextElementSibling && statusEl.nextElementSibling.classList && statusEl.nextElementSibling.classList.contains('config-result')
+      ? statusEl.nextElementSibling : null;
+    if (!details) {
+      details = document.createElement('div');
+      details.className = 'config-result';
+      statusEl.insertAdjacentElement('afterend', details);
+    }
+    details.innerHTML = '';
+    if (!j || (j.ok === false && !Array.isArray(j.results))) {
+      const msg = (j && j.error) || 'Request failed';
+      statusEl.textContent = `Failed: ${msg}`;
+      statusEl.style.color = '#b91c1c';
+      showToast('error', `${noun}: ${msg}`);
+      return;
+    }
+    const results = Array.isArray(j.results) ? j.results : [];
+    const passed = results.filter(r => r.ok).length;
+    const failed = results.length - passed;
+    statusEl.style.color = failed ? '#b91c1c' : '#15803d';
+    statusEl.textContent = `Created ${passed}/${total}${failed ? ` · ${failed} failed` : ''}`;
+    const created = results.filter(r => r.ok).map(r => r.contractName || r.transactionCodeName || r.caseFlagName).filter(Boolean);
+    if (created.length) {
+      const ok = document.createElement('div');
+      ok.className = 'hint';
+      ok.textContent = `Created: ${created.slice(0, 10).join(', ')}${created.length > 10 ? ` … (+${created.length - 10} more)` : ''}`;
+      details.appendChild(ok);
+    }
+    if (failed) {
+      const tbl = document.createElement('div');
+      tbl.className = 'rp-fail-scroll';
+      tbl.style.marginTop = '8px';
+      tbl.innerHTML = `<table class="rp-fail-table"><thead><tr><th>#</th><th>Name</th><th>Error</th></tr></thead><tbody>${
+        results.filter(r => !r.ok).map(r => `<tr><td>${escapeHtml(r.index ?? '')}</td><td>${escapeHtml(r.contractName || r.transactionCodeName || r.caseFlagName || '')}</td><td class="err">${escapeHtml(r.error || '')}</td></tr>`).join('')
+      }</tbody></table>`;
+      details.appendChild(tbl);
+      showToast('error', `${noun}: ${passed} created, ${failed} failed. ${results.find(r => !r.ok).error || ''}`);
+    } else {
+      showToast('success', `${noun}: ${passed} of ${total} created.`);
+    }
   }
 
   if (contractsSendBtn) {
@@ -1269,6 +1268,7 @@
       const isManual = contractsMode && contractsMode.value === 'manual';
       const payload = {
         opts: isManual ? {
+          mode: 'manual',
           apiUrl: apiUrl.value,
           facilityId: Number(facilityId.value),
           count: Number(contractsManualCount && contractsManualCount.value ? contractsManualCount.value : 1) || 1,
@@ -1280,6 +1280,7 @@
           expiryDate: contractExpiryDate ? contractExpiryDate.value : undefined,
           notes: contractNotes ? contractNotes.value : undefined
         } : {
+          mode: 'auto',
           apiUrl: apiUrl.value,
           facilityId: Number(facilityId.value),
           count: Number(contractsAutoCount && contractsAutoCount.value ? contractsAutoCount.value : 1) || 1
@@ -1290,26 +1291,9 @@
       try {
         const res = await fetch('/contracts', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
         const j = await res.json();
-        if (j && Array.isArray(j.logs)) {
-          j.logs.forEach(l => {
-            const when = formatTime(l.startTime || l.timestamp);
-            const status = l.status || (l.error ? 'error' : 'unknown');
-            const dur = Number(l.durationMs || 0);
-            const dsec = (dur/1000).toFixed(2) + 's';
-            pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
-          });
-          renderTable();
-        }
-        if (contractsStatus) {
-          const total = payload.opts.count;
-          const successCount = (j && typeof j.successCount === 'number') ? j.successCount : undefined;
-          const failureCount = (j && typeof j.failureCount === 'number') ? j.failureCount : undefined;
-          contractsStatus.textContent = (successCount !== undefined)
-            ? `Created ${successCount}/${total}${failureCount ? ` (${failureCount} failed)` : ''}`
-            : (j && j.error ? `Failed: ${j.error}` : 'Done');
-        }
+        renderConfigResult(contractsStatus, j, payload.opts.count, 'Contracts');
       } catch (e) {
-        if (contractsStatus) contractsStatus.textContent = 'Failed: network error';
+        if (contractsStatus) { contractsStatus.textContent = 'Failed: could not reach the seeder server (' + (e && e.message ? e.message : e) + ')'; contractsStatus.style.color = '#b91c1c'; }
       } finally {
         contractsSendBtn.disabled = false;
       }
@@ -1321,6 +1305,7 @@
       const isManual = transactionsMode && transactionsMode.value === 'manual';
       const payload = {
         opts: isManual ? {
+          mode: 'manual',
           apiUrl: apiUrl.value,
           facilityId: Number(facilityId.value),
           count: Number(transactionsManualCount && transactionsManualCount.value ? transactionsManualCount.value : 1) || 1,
@@ -1328,6 +1313,7 @@
           toDebit: (transactionCodeToDebit && transactionCodeToDebit.value !== '') ? transactionCodeToDebit.value : undefined,
           toCredit: (transactionCodeToCredit && transactionCodeToCredit.value !== '') ? transactionCodeToCredit.value : undefined
         } : {
+          mode: 'auto',
           apiUrl: apiUrl.value,
           facilityId: Number(facilityId.value),
           count: Number(transactionsAutoCount && transactionsAutoCount.value ? transactionsAutoCount.value : 1) || 1
@@ -1338,26 +1324,9 @@
       try {
         const res = await fetch('/transaction-codes', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
         const j = await res.json();
-        if (j && Array.isArray(j.logs)) {
-          j.logs.forEach(l => {
-            const when = formatTime(l.startTime || l.timestamp);
-            const status = l.status || (l.error ? 'error' : 'unknown');
-            const dur = Number(l.durationMs || 0);
-            const dsec = (dur/1000).toFixed(2) + 's';
-            pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
-          });
-          renderTable();
-        }
-        if (transactionsStatus) {
-          const total = payload.opts.count;
-          const successCount = (j && typeof j.successCount === 'number') ? j.successCount : undefined;
-          const failureCount = (j && typeof j.failureCount === 'number') ? j.failureCount : undefined;
-          transactionsStatus.textContent = (successCount !== undefined)
-            ? `Created ${successCount}/${total}${failureCount ? ` (${failureCount} failed)` : ''}`
-            : (j && j.error ? `Failed: ${j.error}` : 'Done');
-        }
+        renderConfigResult(transactionsStatus, j, payload.opts.count, 'Transaction codes');
       } catch (e) {
-        if (transactionsStatus) transactionsStatus.textContent = 'Failed: network error';
+        if (transactionsStatus) { transactionsStatus.textContent = 'Failed: could not reach the seeder server (' + (e && e.message ? e.message : e) + ')'; transactionsStatus.style.color = '#b91c1c'; }
       } finally {
         transactionsSendBtn.disabled = false;
       }
@@ -1369,6 +1338,7 @@
       const isManual = caseFlagsMode && caseFlagsMode.value === 'manual';
       const payload = {
         opts: isManual ? {
+          mode: 'manual',
           apiUrl: apiUrl.value,
           facilityId: Number(facilityId.value),
           count: Number(caseFlagsManualCount && caseFlagsManualCount.value ? caseFlagsManualCount.value : 1) || 1,
@@ -1377,36 +1347,24 @@
           color: caseFlagColor ? caseFlagColor.value : undefined,
           visibility: caseFlagVisibility
         } : {
+          mode: 'auto',
           apiUrl: apiUrl.value,
           facilityId: Number(facilityId.value),
           count: Number(caseFlagsAutoCount && caseFlagsAutoCount.value ? caseFlagsAutoCount.value : 1) || 1
         }
       };
+      if (isManual) {
+        if (!String(payload.opts.flagName || '').trim()) { alert('Flag Name is required.'); if (caseFlagName) caseFlagName.focus(); return; }
+        if (payload.opts.count === 1 && String(payload.opts.abbreviation || '').length !== 2) { alert('Abbreviation must be exactly 2 letters.'); if (caseFlagAbbreviation) caseFlagAbbreviation.focus(); return; }
+      }
       caseFlagsSendBtn.disabled = true;
       if (caseFlagsStatus) caseFlagsStatus.textContent = 'Sending...';
       try {
         const res = await fetch('/case-flags', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
         const j = await res.json();
-        if (j && Array.isArray(j.logs)) {
-          j.logs.forEach(l => {
-            const when = formatTime(l.startTime || l.timestamp);
-            const status = l.status || (l.error ? 'error' : 'unknown');
-            const dur = Number(l.durationMs || 0);
-            const dsec = (dur/1000).toFixed(2) + 's';
-            pushLogEntry({ time: when, method: l.method, url: l.url, status, duration: dsec, error: l.error });
-          });
-          renderTable();
-        }
-        if (caseFlagsStatus) {
-          const total = payload.opts.count;
-          const successCount = (j && typeof j.successCount === 'number') ? j.successCount : undefined;
-          const failureCount = (j && typeof j.failureCount === 'number') ? j.failureCount : undefined;
-          caseFlagsStatus.textContent = (successCount !== undefined)
-            ? `Created ${successCount}/${total}${failureCount ? ` (${failureCount} failed)` : ''}`
-            : (j && j.error ? `Failed: ${j.error}` : 'Done');
-        }
+        renderConfigResult(caseFlagsStatus, j, payload.opts.count, 'Case flags');
       } catch (e) {
-        if (caseFlagsStatus) caseFlagsStatus.textContent = 'Failed: network error';
+        if (caseFlagsStatus) { caseFlagsStatus.textContent = 'Failed: could not reach the seeder server (' + (e && e.message ? e.message : e) + ')'; caseFlagsStatus.style.color = '#b91c1c'; }
       } finally {
         caseFlagsSendBtn.disabled = false;
       }
@@ -1567,7 +1525,6 @@
     }
     await executeSeedRun({
       payload,
-      progressCtrl: progressControllers.manual,
       totalCount: Number(count && count.value ? count.value : 1) || 1
     });
   });

@@ -41,6 +41,18 @@ function loadCaseSummaryTemplate(isAnesthesiaBilling = false): ICaseSummary {
 	}
 }
 
+// Room / appointment type the case template falls back to when no override is given.
+// These IDs come from the org the template was captured in, so callers validate them against the target org.
+export function getCaseSummaryTemplateDefaults(isAnesthesiaBilling = false) {
+	const t: any = loadCaseSummaryTemplate(isAnesthesiaBilling);
+	return {
+		roomId: typeof t.roomId === 'number' ? t.roomId : undefined,
+		roomName: typeof t.roomName === 'string' ? t.roomName : undefined,
+		appointmentTypeId: typeof t.appointmentTypeId === 'number' ? t.appointmentTypeId : undefined,
+		appointmentTypeName: typeof t.appointmentTypeName === 'string' ? t.appointmentTypeName : undefined,
+	};
+}
+
 function loadCaseGuarantorTemplate(): any {
 	if (cachedCaseGuarantorTemplate) return cachedCaseGuarantorTemplate;
 	try {
@@ -618,12 +630,33 @@ export async function createCaseSummary({
 			lastErr = err;
 			const status = err && err.response ? err.response.status : (typeof err?.status === 'number' ? err.status : undefined);
 			const retryable = !err || !err.response || status === 429 || (typeof status === 'number' && status >= 500);
-			if (!retryable || attempt === UPSERT_MAX_ATTEMPTS) throw err;
+			if (!retryable || attempt === UPSERT_MAX_ATTEMPTS) {
+				// UpsertCaseSummary usually answers a bad reference with an empty 400 ({"message":""}).
+				// Attach the values we sent so the failure can be traced to a specific room / appointment type / CPT.
+				try { if (err && typeof err === 'object') (err as any).caseContext = summarizeCasePayload(payload); } catch (e) {}
+				throw err;
+			}
 			const delay = UPSERT_BASE_DELAY_MS * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 200);
 			await sleep(delay);
 		}
 	}
 	throw lastErr;
+}
+
+export function summarizeCasePayload(payload: any): string {
+	if (!payload || typeof payload !== 'object') return '';
+	const parts: string[] = [];
+	if (payload.organizationId) parts.push(`org ${payload.organizationId}`);
+	parts.push(`room ${payload.roomName ? `"${payload.roomName}" ` : ''}(${payload.roomId ?? '?'})`);
+	parts.push(`appointment type ${payload.appointmentTypeName ? `"${payload.appointmentTypeName}" ` : ''}(${payload.appointmentTypeId ?? '?'})`);
+	parts.push(`physician ${payload.primaryPhysicianId ?? '?'}`);
+	if (Array.isArray(payload.caseProcedures) && payload.caseProcedures.length) {
+		const cpts = payload.caseProcedures.map((p: any) => `${p.cptCode ?? '?'}/feeSchedule ${p.feeScheduleId ?? '?'}`).join(', ');
+		parts.push(`CPT ${cpts}`);
+	}
+	if (payload.dateOfService) parts.push(`DOS ${payload.dateOfService}`);
+	if (payload.startTime && payload.endTime) parts.push(`${payload.startTime}-${payload.endTime}`);
+	return parts.join(', ');
 }
 
 export default createCaseSummary;

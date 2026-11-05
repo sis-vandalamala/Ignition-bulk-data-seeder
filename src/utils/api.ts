@@ -19,24 +19,20 @@ export function setGlobalApiLogger(fn?: (entry: ApiLogEntry) => void) {
 
 // Minimal non-blocking log emitter — uses setImmediate so it won't block the current
 // event loop tick and keeps API call hot paths fast.
+// An entry goes to the call's own logFn when one is given, otherwise to the global logger.
+// (Sending to both produced every log line twice whenever the caller passed the global logger as logFn.)
 function emitLog(entry: ApiLogEntry, logFn?: (entry: ApiLogEntry) => void) {
 	try {
-		if (typeof setImmediate === 'function') {
-			setImmediate(() => {
-				try { if (logFn) logFn(entry); } catch (e) {}
-				try { if (globalLogger) globalLogger(entry); } catch (e) {}
-				// console fallback can be enabled explicitly in env for developer visibility
-				try { consoleFallback(entry); } catch (e) {}
-			});
-		} else {
-			// Fallback — schedule via Promise microtask to avoid blocking
-			Promise.resolve().then(() => {
-				try { if (logFn) logFn(entry); } catch (e) {}
-				try { if (globalLogger) globalLogger(entry); } catch (e) {}
-				// console fallback can be enabled explicitly in env for developer visibility
-				try { consoleFallback(entry); } catch (e) {}
-			});
-		}
+		const deliver = () => {
+			try {
+				if (logFn) logFn(entry);
+				else if (globalLogger) globalLogger(entry);
+			} catch (e) {}
+			// console fallback can be enabled explicitly in env for developer visibility
+			try { consoleFallback(entry); } catch (e) {}
+		};
+		if (typeof setImmediate === 'function') setImmediate(deliver);
+		else Promise.resolve().then(deliver);
 	} catch (e) {
 		// swallow any logging errors to avoid affecting API paths
 	}
@@ -72,7 +68,6 @@ export async function postJson(url: string, payload: any, timeout = 5000, header
 		const duration = end - start;
 		const entry: ApiLogEntry = { url, method: 'POST', status: res.status, durationMs: duration, startTime: startIso, endTime: endIso, timestamp: endIso };
 		emitLog(entry, logFn);
-		console.log(res)
 		return res.data;
 	} catch (err: any) {
 			const end = Date.now();
@@ -128,6 +123,36 @@ export function formatErrorWithBody(err: any, resp?: any) {
 	}
 }
 
+// Human-readable, single-line description of a failed API call:
+// "HTTP 400 POST /api/CaseSummaryComplex/Gemini/UpsertCaseSummary — {"message":"..."}"
+// Falls back to the plain error message for non-HTTP errors (timeouts, ECONNRESET, thrown Errors).
+export function describeApiError(err: any): string {
+	if (!err) return 'Unknown error';
+	const resp = err.response;
+	const cfg = err.config;
+	if (resp || cfg) {
+		const method = cfg && cfg.method ? String(cfg.method).toUpperCase() : '';
+		let path = '';
+		try { path = cfg && cfg.url ? new URL(cfg.url).pathname : ''; } catch (e) { path = cfg && cfg.url ? String(cfg.url) : ''; }
+		const where = [method, path].filter(Boolean).join(' ');
+		if (!resp) {
+			const code = err.code ? ` (${err.code})` : '';
+			return `${where ? where + ': ' : ''}no response — ${err.message || String(err)}${code}`;
+		}
+		let body = '';
+		try {
+			const d = resp.data;
+			if (d !== undefined && d !== null && d !== '') {
+				body = typeof d === 'string' ? d : JSON.stringify(d);
+				if (body.length > 1500) body = body.slice(0, 1500) + '…';
+			}
+		} catch (e) {}
+		const emptyMsg = body === '' || body === '{"message":""}' ? ' (API returned no error message)' : '';
+		return `HTTP ${resp.status} ${where}${body ? ' — ' + body : ''}${emptyMsg}`;
+	}
+	return err.message ? String(err.message) : String(err);
+}
+
 export async function deleteJson(url: string, timeout = 5000, headers?: Record<string, any>, logFn?: (entry: ApiLogEntry) => void) {
 	const start = Date.now();
 	const startIso = new Date(start).toISOString();
@@ -153,8 +178,25 @@ export async function deleteJson(url: string, timeout = 5000, headers?: Record<s
 	}
 }
 
+// Network-level failures (connection reset / refused, DNS hiccups) with no HTTP response.
+// Timeouts are excluded so a slow endpoint is not hit three times.
+const RETRYABLE_NETWORK_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'ERR_SOCKET_CONNECTION_TIMEOUT']);
+const GET_MAX_ATTEMPTS = 3;
+
+// GETs are idempotent, so dropped connections (seen as "read ECONNRESET" on the target API) are retried.
 export async function getJson(url: string, timeout = 5000, headers?: Record<string, any>, logFn?: (entry: ApiLogEntry) => void) {
-	// debug logging suppressed
+	for (let attempt = 1; ; attempt += 1) {
+		try {
+			return await getJsonOnce(url, timeout, headers, logFn);
+		} catch (err: any) {
+			const retryable = err && !err.response && RETRYABLE_NETWORK_CODES.has(String(err.code || ''));
+			if (!retryable || attempt >= GET_MAX_ATTEMPTS) throw err;
+			await new Promise((r) => setTimeout(r, 300 * attempt));
+		}
+	}
+}
+
+async function getJsonOnce(url: string, timeout = 5000, headers?: Record<string, any>, logFn?: (entry: ApiLogEntry) => void) {
 	const start = Date.now();
 	const startIso = new Date(start).toISOString();
 	const opts: any = { timeout };

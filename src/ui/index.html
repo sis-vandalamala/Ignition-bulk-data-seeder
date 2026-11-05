@@ -68,6 +68,33 @@
       .logout-btn:hover{background:#244c94}
       .case-flag-visibility-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
       .hint{font-size:13px;color:var(--muted);margin-top:8px}
+      .run-progress{margin:0 0 20px}
+      .rp-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+      .rp-title{font-weight:700;font-size:15px}
+      .rp-sub{font-size:13px;margin-top:2px}
+      .rp-label{font-size:13px;font-weight:600;color:#334155}
+      .rp-bar{display:flex;width:100%;height:10px;margin-top:12px;background:var(--trackBg);border-radius:999px;overflow:hidden}
+      .rp-fill{height:100%;width:0;transition:width 300ms linear}
+      .rp-pass{background:#16a34a}
+      .rp-fail{background:#dc2626}
+      .rp-run{background:var(--trackFill);opacity:.35}
+      .rp-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:14px}
+      .rp-stat{display:flex;flex-direction:column;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc}
+      .rp-stat.pass .rp-num{color:#15803d}
+      .rp-stat.fail .rp-num{color:#b91c1c}
+      .rp-num{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+      .rp-cap{font-size:12px;color:var(--muted)}
+      .rp-stages{font-size:12px;color:#475569;margin-top:10px;min-height:16px}
+      .rp-warnings{margin-top:10px;padding:8px 12px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:12px}
+      .rp-warnings div+div{margin-top:4px}
+      .rp-fail-title{font-weight:600;font-size:13px;margin:14px 0 6px;color:#b91c1c}
+      .rp-fail-scroll{max-height:260px;overflow:auto;border:1px solid #fecaca;border-radius:8px}
+      .rp-fail-table{width:100%;border-collapse:collapse;font-size:12px}
+      .rp-fail-table th{position:sticky;top:0;background:#fef2f2;text-align:left;padding:6px 8px;color:#7f1d1d}
+      .rp-fail-table td{padding:6px 8px;border-top:1px solid #fee2e2;vertical-align:top}
+      .rp-fail-table td.err{word-break:break-word;color:#7f1d1d;min-width:260px}
+      .log-err{color:#fca5a5;font-size:11px;white-space:normal;word-break:break-word;margin-top:2px}
+      @media (max-width:640px){.rp-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
       /* Flow depth highlight label styles */
       .flow-label{font-size:13px;font-weight:600;padding:6px 12px;border-radius:10px;display:inline-block;background:#f8fafc;color:#475569;border:1px solid #e2e8f0;letter-spacing:.25px;transition:border-color .3s,color .3s,background .3s}
       .flow-label[data-depth="0"]{background:#f8fafc;color:#475569}
@@ -335,19 +362,13 @@
                       <div class="flow-step" data-step="3"><button type="button" class="dot"></button><span class="label">Charge Entry</span></div>
                     </div>
                     <div id="flowDepthLabel" class="flow-label" data-depth="3" style="margin-top:12px">Full: Charge Entry</div>
+                    <div id="flowTrackerHint" class="hint"></div>
                   </div>
                 </div>
               </div>
               <div class="actions" style="margin-top:16px">
                 <div style="display:flex;align-items:center;gap:12px">
-                  <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px">
-                    <div id="runProgressWrap" style="width:60%;min-width:220px;display:none;flex-direction:column;align-items:center;">
-                      <div id="runProgressBar" style="width:100%;height:10px;background:var(--trackBg);border-radius:999px;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,0.03)">
-                        <div id="runProgressFill" style="width:0%;height:100%;background:var(--trackFill);transition:width 300ms linear"></div>
-                      </div>
-                      <div id="runProgressLabel" style="font-size:12px;color:var(--muted);margin-top:6px;">Idle</div>
-                    </div>
-                  </div>
+                  <div style="flex:1"></div>
                   <div style="display:flex;align-items:center;gap:8px">
                     <button id="runBtn">Run</button>
                   </div>
@@ -370,17 +391,49 @@
                   <input id="autoConcurrency" type="number" min="1" value="4" />
                 </div>
                 <div class="field" style="grid-column: span 2">
-                  <label>Workflow Action</label>
+                  <label>Target Tracker</label>
                   <select id="autoActionSelect">
-                    <option value="createBasicPatients">Financial Clearance Tracker</option>
-                    <option value="dischargeCases">Cases to Code Tracker</option>
-                    <option value="casesToCode">Charge Entry Tracker</option>
-                    <option value="chargeEntry">Balance/Reconciliation Tracker</option>
+                    <option value="financialClearance">Financial Clearance Tracker</option>
+                    <option value="casesToCodeTracker">Cases to Code Tracker</option>
+                    <option value="chargeEntryTracker">Charge Entry Tracker</option>
+                    <option value="insuranceBilling">Insurance Billing Tracker</option>
+                    <option value="patientStatements">Patient Statements Tracker</option>
+                    <option value="balanceReconciliation">Balance/Reconciliation Tracker</option>
+                    <option value="remittancePosting" disabled>Remittance Posting Tracker (not supported yet)</option>
                   </select>
+                  <div id="autoActionHint" class="hint"></div>
                 </div>
               </div>
               <div class="actions">
                 <button id="autoRunBtn">Run</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="runProgressWrap" class="card run-progress is-hidden">
+            <div class="rp-head">
+              <div>
+                <div class="rp-title">Run Progress</div>
+                <div id="runTargetTracker" class="muted rp-sub"></div>
+              </div>
+              <div id="runProgressLabel" class="rp-label">Idle</div>
+            </div>
+            <div id="runProgressBar" class="rp-bar"><div id="runProgressPassed" class="rp-fill rp-pass"></div><div id="runProgressFailed" class="rp-fill rp-fail"></div><div id="runProgressFill" class="rp-fill rp-run"></div></div>
+            <div class="rp-stats">
+              <div class="rp-stat"><span class="rp-num" id="rpCompleted">0/0</span><span class="rp-cap">Completed</span></div>
+              <div class="rp-stat pass"><span class="rp-num" id="rpPassed">0</span><span class="rp-cap">Passed</span></div>
+              <div class="rp-stat fail"><span class="rp-num" id="rpFailed">0</span><span class="rp-cap">Failed</span></div>
+              <div class="rp-stat"><span class="rp-num" id="rpInProgress">0</span><span class="rp-cap">In progress</span></div>
+            </div>
+            <div id="rpStages" class="rp-stages"></div>
+            <div id="rpWarnings" class="rp-warnings is-hidden"></div>
+            <div id="rpFailuresWrap" class="is-hidden">
+              <div class="rp-fail-title">Failed cases</div>
+              <div class="rp-fail-scroll">
+                <table class="rp-fail-table">
+                  <thead><tr><th>#</th><th>Patient</th><th>Case</th><th>Failed at</th><th>Error</th></tr></thead>
+                  <tbody id="rpFailuresBody"></tbody>
+                </table>
               </div>
             </div>
           </div>
