@@ -518,7 +518,10 @@
         start = { ok: false, error: 'Could not reach the seeder server: ' + (e && e.message ? e.message : String(e)) };
       }
       if (!start || !start.ok || !start.runId) {
-        const msg = (start && start.error) || 'Seed run could not be started.';
+        // An older server build answers POST /seed with the whole result and no runId
+        const staleServer = start && start.ok && !start.runId && (start.result || start.message);
+        const msg = (start && start.error)
+          || (staleServer ? 'The seeder server is running an older build than this page. Stop it and start it again (npm start), then reload this page.' : 'Seed run could not be started.');
         runProgress.finish({ total: targetTotal, completed: 0, passed: 0, failed: 0, warnings: [] }, msg);
         pushLogEntry({ time: formatTime(new Date().toISOString()), method: '-', url: 'Seed run', status: 'error', duration: '', error: msg });
         renderTable();
