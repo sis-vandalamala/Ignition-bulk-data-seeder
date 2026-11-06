@@ -332,10 +332,10 @@ The **flow depth** controls how far down the pipeline each patient progresses:
 | `/login` | POST | Authenticates against the Gemini API. Body: `{apiUrl, username, password, facilityId}`. Returns `{ok, token, orgId, logs}` |
 | `/logout` | POST | Clears session token. Body: `{token}` |
 | `/seed` | POST | **Main seeding endpoint.** Body: `{opts: {...}}`. Starts a background run (insurance creation + per-case pipeline) and returns immediately with `{ok, runId, total, targetTracker, warnings}`. Returns 409 while another run is in progress. |
-| `/seed/status` | GET | Live progress for `?runId=…&logsFrom=N`: `{status, finished, total, completed, passed, failed, inProgress, stageCounts, failures[], warnings[], error, elapsedMs, logs (new since logsFrom), logsTotal}`; includes `final` (summary + per-case results) once finished. |
-| `/contracts` | POST | Creates insurance contracts. Body `{opts: {mode, count, contractType, pctBilledCharges, pctAllowed, effectiveDate, expiryDate, notes}}`. Returns `{ok, results[{ok, index, contractName, insuranceContractId, error}], successCount, failureCount, route, logs}` |
-| `/transaction-codes` | POST | Creates transaction codes. Body `{opts: {mode, count, type, toDebit, toCredit}}`. Same response shape. |
-| `/case-flags` | POST | Creates case flag configs for the logged-in org. Body `{opts: {mode, count, flagName, abbreviation, color, visibility}}`. Same response shape. |
+| `/seed/status` | GET | Live progress for any run (cases, contracts, transaction codes, case flags) `?runId=…&logsFrom=N`: `{status, finished, total, completed, passed, failed, inProgress, stageCounts, failures[], warnings[], error, elapsedMs, logs (new since logsFrom), logsTotal}`; includes `final` (summary + per-case results) once finished. |
+| `/contracts` | POST | Starts a background run creating insurance contracts. Body `{opts: {mode, count, contractType, pctBilledCharges, pctAllowed, effectiveDate, expiryDate, notes}}`. Returns `{ok, runId, total}`; follow it with `/seed/status` (its `final` holds `{results[{ok, index, contractName, insuranceContractId, error}], successCount, failureCount, route}`). |
+| `/transaction-codes` | POST | Same, for transaction codes. Body `{opts: {mode, count, type, toDebit, toCredit}}`. |
+| `/case-flags` | POST | Same, for case flag configs of the logged-in org. Body `{opts: {mode, count, flagName, abbreviation, color, visibility}}`. |
 | `/support-data` | POST | Fetches reference data from the target API. Body: `{apiUrl, facilityId}`. Returns `{rooms, appointmentTypes, physicians, feeSchedule, periods, batches, insurances, generalLedgerAccounts, caseFlagColors}` |
 
 ### Contracts, Transaction Codes and Case Flags
@@ -345,6 +345,7 @@ These follow what the SIS Enterprise configuration pages do:
 - **Route selection** — when feature 247 "Business Office Granular Permissions" is on, the `/api/facility/business/...` routes are used; when it is off (they answer 403 "Feature [...] not found") the legacy routes are used: `InsuranceContract/SaveInsuranceContract`, `SaveInsuranceContractPostingOption`, `RecalculateContractReviewListByContractId`, `TransactionCode/UpsertTransactionCode`, `GeneralLedgerAccount/List`.
 - **Contracts** — `contractType` 1 Grouper, 2 Contract Fee Schedule, 3 % of Billed Charges. Fee Schedule / % of Billed get a posting option (adjustment time "At Charge Posting") and a review-list recalculation. Auto mode: % of Billed Charges, random 30–80 %, effective today for one year.
 - **Transaction codes** — saved with `transactionTypeId` (Payment 2, Unassigned Payment 3, Write-Off 4, Correction 5, Debit 6, Transfer 7, Allocation 8) and optional GL accounts. GL dropdowns are empty when the "General Ledger Account Functionality" feature is off.
+- **Progress** — each of these screens shows the same Run Progress card as Case Creation (live completed / passed / failed counts and a failed-items table with the API error).
 - **Case flags** — `POST CaseFlag/Config` under the org configuration lock (`RequestLock {recordLockTypeId: 27, organizationId}`), released afterwards. If another session holds the lock (e.g. the Case Flags page is open in SIS) the run stops with a clear message. Colors come from `CaseFlag/Colors`; visibility Clinical 1 / Business 2 / Both 3.
 
 ---

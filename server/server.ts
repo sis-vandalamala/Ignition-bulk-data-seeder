@@ -338,33 +338,66 @@ app.get('/seed/status', (req, res) => {
 	}, finished ? { final: job.response } : {}));
 });
 
-// Runs a configuration seeding job (contracts / transaction codes / case flags) and returns
-// per-item results with detailed errors. Log entries are emitted asynchronously, so flush them before replying.
-function runConfigJob(req: express.Request, res: express.Response, work: (ctx: { token: string; opts: any; logger: (e: any) => void }) => Promise<{ results: any[]; route?: string }>) {
+// Runs a configuration seeding job (contracts / transaction codes / case flags) in the background.
+// POST returns { runId } right away; GET /seed/status?runId=... gives live counts, failures and logs,
+// exactly like a case seeding run (one run of any kind at a time, since API logging is global).
+type ConfigHooks = { onItemStart: (index: number, stage: string) => void; onItemComplete: (r: any) => void };
+function runConfigJob(req: express.Request, res: express.Response, label: string, work: (ctx: { token: string; opts: any; logger: (e: any) => void; hooks: ConfigHooks }) => Promise<{ results: any[]; route?: string }>) {
 	const token = (req.app.locals as any).token || (req.headers as any).token || null;
-	const logs: Array<any> = [];
-	const logger = (entry: any) => { try { logs.push(entry); } catch (e) {} };
+	const opts = req.body && req.body.opts ? req.body.opts : {};
+	const busy = runningJob();
+	if (busy) return res.status(409).json({ ok: false, error: `Another run is in progress (${busy.completed}/${busy.total} done). Wait for it to finish.`, runId: busy.runId });
+	const total = Math.max(1, Number(opts.count) || 1);
+	const runId = `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+	const job: SeedJob = { runId, status: 'running', targetTracker: label, total, completed: 0, passed: 0, failed: 0, inStage: {}, failures: [], warnings: [], logs: [], startedAt: Date.now() };
+	rememberJob(job);
+	const logger = (entry: any) => { try { job.logs.push(entry); } catch (e) {} };
 	setGlobalApiLogger(logger);
+	res.json({ ok: true, runId, total, targetTracker: label, warnings: [] });
+
+	const hooks: ConfigHooks = {
+		onItemStart: (index, stage) => { job.inStage[index] = stage; },
+		onItemComplete: (r) => {
+			if (!r) return;
+			const stage = job.inStage[r.index] || label;
+			delete job.inStage[r.index];
+			job.completed += 1;
+			if (r.ok) job.passed += 1;
+			else {
+				job.failed += 1;
+				job.failures.push({ index: r.index, patientName: r.contractName || r.transactionCodeName || r.caseFlagName || '', stage, error: r.error || 'Unknown error' });
+			}
+		},
+	};
 	(async () => {
-		const started = Date.now();
 		try {
-			const opts = req.body && req.body.opts ? req.body.opts : {};
-			const out = await work({ token, opts, logger });
+			const out = await work({ token, opts, logger, hooks });
 			await new Promise((r) => setImmediate(r));
 			const results = out.results || [];
 			const successCount = results.filter((r: any) => r.ok).length;
 			const failureCount = results.length - successCount;
-			return res.json({ ok: failureCount === 0, results, successCount, failureCount, route: out.route, tokenPresent: !!token, logs, elapsedMs: Date.now() - started });
+			// keep counts consistent even if a service did not report every item
+			job.completed = results.length; job.passed = successCount; job.failed = failureCount;
+			job.status = 'finished';
+			job.finishedAt = Date.now();
+			job.response = { ok: failureCount === 0, results: results.map(({ data, ...rest }: any) => rest), successCount, failureCount, route: out.route, targetTracker: label, runElapsedMs: job.finishedAt - job.startedAt };
 		} catch (e: any) {
 			await new Promise((r) => setImmediate(r));
-			return res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e), logs });
+			job.status = 'error';
+			job.finishedAt = Date.now();
+			job.error = e && e.message ? e.message : String(e);
+			const notRun = job.total - job.completed;
+			if (notRun > 0) job.failed += notRun;
+			job.inStage = {};
+			job.response = { ok: false, error: job.error, targetTracker: label };
 		} finally {
 			setGlobalApiLogger(undefined);
 		}
 	})();
 }
 
-app.post('/contracts', (req, res) => runConfigJob(req, res, ({ token, opts, logger }) => createContracts({
+app.post('/contracts', (req, res) => runConfigJob(req, res, 'Contracts', ({ token, opts, logger, hooks }) => createContracts({
+	...hooks,
 	apiBaseUrl: opts.apiUrl || opts.url,
 	token,
 	mode: opts.mode,
@@ -379,7 +412,8 @@ app.post('/contracts', (req, res) => runConfigJob(req, res, ({ token, opts, logg
 	logFn: logger,
 })));
 
-app.post('/transaction-codes', (req, res) => runConfigJob(req, res, ({ token, opts, logger }) => createTransactionCodes({
+app.post('/transaction-codes', (req, res) => runConfigJob(req, res, 'Transaction Codes', ({ token, opts, logger, hooks }) => createTransactionCodes({
+	...hooks,
 	apiBaseUrl: opts.apiUrl || opts.url,
 	token,
 	mode: opts.mode,
@@ -390,7 +424,8 @@ app.post('/transaction-codes', (req, res) => runConfigJob(req, res, ({ token, op
 	logFn: logger,
 })));
 
-app.post('/case-flags', (req, res) => runConfigJob(req, res, ({ token, opts, logger }) => createCaseFlags({
+app.post('/case-flags', (req, res) => runConfigJob(req, res, 'Case Flags', ({ token, opts, logger, hooks }) => createCaseFlags({
+	...hooks,
 	apiBaseUrl: opts.apiUrl || opts.url,
 	token,
 	// the lock and the flags belong to the org the session is bound to

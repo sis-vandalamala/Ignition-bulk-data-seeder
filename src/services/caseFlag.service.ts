@@ -32,6 +32,9 @@ export type CreateCaseFlagsOptions = {
 	visibility?: string; // Clinical | Business | Both
 	extraHeaders?: Record<string, string>;
 	logFn?: (entry: ApiLogEntry) => void;
+	// live progress hooks (one call per item)
+	onItemStart?: (index: number, stage: string) => void;
+	onItemComplete?: (result: any) => void;
 };
 
 export type CaseFlagAttemptResult = {
@@ -88,6 +91,7 @@ export async function createCaseFlags(opts: CreateCaseFlagsOptions): Promise<{ r
 			let abbreviation = '';
 			let color: CaseFlagColor | undefined;
 			let visibility = '';
+			try { opts.onItemStart?.(i, 'Saving case flag'); } catch (e) {}
 			try {
 				color = pickColor();
 				visibility = opts.mode === 'auto' ? visibilityNames[Math.floor(Math.random() * visibilityNames.length)] : (opts.visibility || 'Clinical');
@@ -126,6 +130,7 @@ export async function createCaseFlags(opts: CreateCaseFlagsOptions): Promise<{ r
 				const msg = err && err.response ? `Save case flag failed: ${describeApiError(err)}` : (err && err.message ? err.message : String(err));
 				results.push({ ok: false, index: i, caseFlagName, abbreviation, color: color && color.name, visibility, error: msg });
 			}
+			try { opts.onItemComplete?.(results[results.length - 1]); } catch (e) {}
 		}
 	} finally {
 		try { await postJson(`${api}/Security/RecordLock/ReleaseLock`, lockBody, 15000, headers, opts.logFn); } catch (e) { /* lock expires with the session */ }

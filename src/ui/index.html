@@ -410,33 +410,7 @@
             </div>
           </div>
 
-          <div id="runProgressWrap" class="card run-progress is-hidden">
-            <div class="rp-head">
-              <div>
-                <div class="rp-title">Run Progress</div>
-                <div id="runTargetTracker" class="muted rp-sub"></div>
-              </div>
-              <div id="runProgressLabel" class="rp-label">Idle</div>
-            </div>
-            <div id="runProgressBar" class="rp-bar"><div id="runProgressPassed" class="rp-fill rp-pass"></div><div id="runProgressFailed" class="rp-fill rp-fail"></div><div id="runProgressFill" class="rp-fill rp-run"></div></div>
-            <div class="rp-stats">
-              <div class="rp-stat"><span class="rp-num" id="rpCompleted">0/0</span><span class="rp-cap">Completed</span></div>
-              <div class="rp-stat pass"><span class="rp-num" id="rpPassed">0</span><span class="rp-cap">Passed</span></div>
-              <div class="rp-stat fail"><span class="rp-num" id="rpFailed">0</span><span class="rp-cap">Failed</span></div>
-              <div class="rp-stat"><span class="rp-num" id="rpInProgress">0</span><span class="rp-cap">In progress</span></div>
-            </div>
-            <div id="rpStages" class="rp-stages"></div>
-            <div id="rpWarnings" class="rp-warnings is-hidden"></div>
-            <div id="rpFailuresWrap" class="is-hidden">
-              <div class="rp-fail-title">Failed cases</div>
-              <div class="rp-fail-scroll">
-                <table class="rp-fail-table">
-                  <thead><tr><th>#</th><th>Patient</th><th>Case</th><th>Failed at</th><th>Error</th></tr></thead>
-                  <tbody id="rpFailuresBody"></tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+          <div id="runProgressWrap" class="card run-progress is-hidden"></div>
 
           <div style="max-width:100%;margin:0 auto 36px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -537,6 +511,7 @@
               <span id="contractsStatus" class="muted" style="margin-left:12px"></span>
             </div>
           </div>
+          <div id="contractsProgress" class="card run-progress is-hidden" style="margin-top:20px"></div>
         </section>
 
         <section id="transactionsView" class="view-panel" style="display:none">
@@ -598,6 +573,7 @@
               <span id="transactionsStatus" class="muted" style="margin-left:12px"></span>
             </div>
           </div>
+          <div id="transactionsProgress" class="card run-progress is-hidden" style="margin-top:20px"></div>
         </section>
 
         <section id="caseFlagsView" class="view-panel" style="display:none">
@@ -665,6 +641,7 @@
               <span id="caseFlagsStatus" class="muted" style="margin-left:12px"></span>
             </div>
           </div>
+          <div id="caseFlagsProgress" class="card run-progress is-hidden" style="margin-top:20px"></div>
         </section>
       </main>
     </div>

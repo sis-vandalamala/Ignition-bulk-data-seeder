@@ -55,6 +55,9 @@ export async function createTransactionCode(o: CreateTransactionCodeOptions) {
 export type CreateTransactionCodesBatchOptions = Omit<CreateTransactionCodeOptions, 'transactionCodeName' | 'granular'> & {
 	count?: number;
 	mode?: 'auto' | 'manual';
+	// live progress hooks (one call per item)
+	onItemStart?: (index: number, stage: string) => void;
+	onItemComplete?: (result: any) => void;
 };
 
 export type TransactionCodeAttemptResult = {
@@ -78,12 +81,14 @@ export async function createTransactionCodes(opts: CreateTransactionCodesBatchOp
 		const transactionCodeName = `TXN ${uniqueSuffix()}`;
 		// Auto mode: random type, no GL accounts
 		const type = opts.mode === 'auto' ? typeNames[Math.floor(Math.random() * typeNames.length)] : (opts.type || 'Allocation');
+		try { opts.onItemStart?.(i, 'Saving transaction code'); } catch (e) {}
 		try {
 			const data = await createTransactionCode({ ...opts, transactionCodeName, granular, type, toDebit: opts.mode === 'auto' ? undefined : opts.toDebit, toCredit: opts.mode === 'auto' ? undefined : opts.toCredit });
 			results.push({ ok: true, index: i, transactionCodeName, type, transactionCodeId: data && data.transactionCodeId, data });
 		} catch (err: any) {
 			results.push({ ok: false, index: i, transactionCodeName, type, error: err && err.message ? err.message : String(err) });
 		}
+		try { opts.onItemComplete?.(results[results.length - 1]); } catch (e) {}
 	}
 	return { results, route: granular ? 'granular' : 'legacy' };
 }

@@ -117,6 +117,9 @@ export async function createContract(o: CreateContractOptions) {
 export type CreateContractsBatchOptions = Omit<CreateContractOptions, 'contractName' | 'granular'> & {
 	count?: number;
 	mode?: 'auto' | 'manual';
+	// live progress hooks (one call per item)
+	onItemStart?: (index: number, stage: string) => void;
+	onItemComplete?: (result: any) => void;
 };
 
 export type ContractAttemptResult = {
@@ -145,12 +148,14 @@ export async function createContracts(opts: CreateContractsBatchOptions): Promis
 		const pctBilledCharges = isAuto ? 30 + Math.floor(Math.random() * 51) : opts.pctBilledCharges;
 		const effectiveDate = isAuto ? ymd(today) : opts.effectiveDate;
 		const expiryDate = isAuto ? ymd(new Date(Date.UTC(today.getUTCFullYear() + 1, today.getUTCMonth(), today.getUTCDate()))) : opts.expiryDate;
+		try { opts.onItemStart?.(i, 'Saving contract'); } catch (e) {}
 		try {
 			const data = await createContract({ ...opts, contractName, granular, contractType, pctBilledCharges, effectiveDate, expiryDate, notes: isAuto ? 'Seeded by Ignition' : opts.notes });
 			results.push({ ok: true, index: i, contractName, contractType, insuranceContractId: data.contract?.insuranceContractId, data });
 		} catch (err: any) {
 			results.push({ ok: false, index: i, contractName, contractType, error: err && err.message ? err.message : String(err) });
 		}
+		try { opts.onItemComplete?.(results[results.length - 1]); } catch (e) {}
 	}
 	return { results, route: granular ? 'granular' : 'legacy' };
 }

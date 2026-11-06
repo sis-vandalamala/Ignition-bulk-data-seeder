@@ -116,20 +116,6 @@
     return true;
   }
   const elapsedEl = document.getElementById('elapsedDisplay');
-  const runProgressFill = document.getElementById('runProgressFill');
-  const runProgressPassed = document.getElementById('runProgressPassed');
-  const runProgressFailed = document.getElementById('runProgressFailed');
-  const runProgressLabel = document.getElementById('runProgressLabel');
-  const runProgressWrap = document.getElementById('runProgressWrap');
-  const runTargetTracker = document.getElementById('runTargetTracker');
-  const rpCompleted = document.getElementById('rpCompleted');
-  const rpPassed = document.getElementById('rpPassed');
-  const rpFailed = document.getElementById('rpFailed');
-  const rpInProgress = document.getElementById('rpInProgress');
-  const rpStages = document.getElementById('rpStages');
-  const rpWarnings = document.getElementById('rpWarnings');
-  const rpFailuresWrap = document.getElementById('rpFailuresWrap');
-  const rpFailuresBody = document.getElementById('rpFailuresBody');
   const HIDDEN_CLASS = 'is-hidden';
 
   function setVisibility(el, visible, displayMode = 'block') {
@@ -327,63 +313,88 @@
   if (autoActionSelect) { autoActionSelect.addEventListener('change', updateAutoActionHint); updateAutoActionHint(); }
   // Auto mode uses an action select instead of a flow depth slider
 
-  // Run progress card: driven by real case counts from GET /seed/status (no fake animation)
-  const runProgress = {
-    reset(totalCount, trackerLabel){
-      setVisibility(runProgressWrap, true, 'block');
-      if (runTargetTracker) runTargetTracker.textContent = trackerLabel ? `Target: ${trackerLabel}` : '';
-      this.update({ total: totalCount || 0, completed: 0, passed: 0, failed: 0, inProgress: 0, stageCounts: {}, failures: [], warnings: [] });
-      if (runProgressLabel) runProgressLabel.textContent = 'Starting…';
-    },
-    update(st){
-      const total = Math.max(1, Number(st.total) || 0);
-      const passed = Number(st.passed) || 0;
-      const failed = Number(st.failed) || 0;
-      const completed = Number(st.completed) || 0;
-      const inProgress = Number(st.inProgress) || 0;
-      const pct = (n) => Math.min(100, (n / total) * 100) + '%';
-      if (runProgressPassed) runProgressPassed.style.width = pct(passed);
-      if (runProgressFailed) runProgressFailed.style.width = pct(failed);
-      if (runProgressFill) runProgressFill.style.width = pct(inProgress);
-      if (rpCompleted) rpCompleted.textContent = `${completed}/${st.total || 0}`;
-      if (rpPassed) rpPassed.textContent = String(passed);
-      if (rpFailed) rpFailed.textContent = String(failed);
-      if (rpInProgress) rpInProgress.textContent = String(inProgress);
-      if (runProgressLabel) runProgressLabel.textContent = `${Math.round((completed / total) * 100)}% · ${completed} of ${st.total || 0} cases done`;
-      if (rpStages) {
+  // Run progress card (used on Case Creation, Contracts, Transaction Codes and Case Flags).
+  // Driven by real counts from GET /seed/status — no fake animation.
+  function createRunProgressCard(wrap, cfg) {
+    const o = Object.assign({ itemNoun: 'cases', failTitle: 'Failed cases', nameHeader: 'Patient', showCase: true }, cfg || {});
+    if (!wrap) return { reset(){}, update(){}, finish(){}, setTarget(){} };
+    wrap.innerHTML = `
+      <div class="rp-head">
+        <div>
+          <div class="rp-title">Run Progress</div>
+          <div class="muted rp-sub" data-rp="target"></div>
+        </div>
+        <div class="rp-label" data-rp="label">Idle</div>
+      </div>
+      <div class="rp-bar"><div class="rp-fill rp-pass" data-rp="barPass"></div><div class="rp-fill rp-fail" data-rp="barFail"></div><div class="rp-fill rp-run" data-rp="barRun"></div></div>
+      <div class="rp-stats">
+        <div class="rp-stat"><span class="rp-num" data-rp="completed">0/0</span><span class="rp-cap">Completed</span></div>
+        <div class="rp-stat pass"><span class="rp-num" data-rp="passed">0</span><span class="rp-cap">Passed</span></div>
+        <div class="rp-stat fail"><span class="rp-num" data-rp="failed">0</span><span class="rp-cap">Failed</span></div>
+        <div class="rp-stat"><span class="rp-num" data-rp="inProgress">0</span><span class="rp-cap">In progress</span></div>
+      </div>
+      <div class="rp-stages" data-rp="stages"></div>
+      <div class="rp-warnings is-hidden" data-rp="warnings"></div>
+      <div class="is-hidden" data-rp="failWrap">
+        <div class="rp-fail-title">${escapeHtml(o.failTitle)}</div>
+        <div class="rp-fail-scroll">
+          <table class="rp-fail-table">
+            <thead><tr><th>#</th><th>${escapeHtml(o.nameHeader)}</th>${o.showCase ? '<th>Case</th>' : ''}<th>Failed at</th><th>Error</th></tr></thead>
+            <tbody data-rp="failBody"></tbody>
+          </table>
+        </div>
+      </div>`;
+    const el = (k) => wrap.querySelector(`[data-rp="${k}"]`);
+    const E = { target: el('target'), label: el('label'), barPass: el('barPass'), barFail: el('barFail'), barRun: el('barRun'), completed: el('completed'), passed: el('passed'), failed: el('failed'), inProgress: el('inProgress'), stages: el('stages'), warnings: el('warnings'), failWrap: el('failWrap'), failBody: el('failBody') };
+    return {
+      setTarget(label){ E.target.textContent = label ? `Target: ${label}` : ''; },
+      reset(totalCount, label){
+        setVisibility(wrap, true, 'block');
+        this.setTarget(label);
+        this.update({ total: totalCount || 0, completed: 0, passed: 0, failed: 0, inProgress: 0, stageCounts: {}, failures: [], warnings: [] });
+        E.label.textContent = 'Starting…';
+      },
+      update(st){
+        const total = Math.max(1, Number(st.total) || 0);
+        const passed = Number(st.passed) || 0;
+        const failed = Number(st.failed) || 0;
+        const completed = Number(st.completed) || 0;
+        const inProgress = Number(st.inProgress) || 0;
+        const pct = (n) => Math.min(100, (n / total) * 100) + '%';
+        E.barPass.style.width = pct(passed);
+        E.barFail.style.width = pct(failed);
+        E.barRun.style.width = pct(inProgress);
+        E.completed.textContent = `${completed}/${st.total || 0}`;
+        E.passed.textContent = String(passed);
+        E.failed.textContent = String(failed);
+        E.inProgress.textContent = String(inProgress);
+        E.label.textContent = `${Math.round((completed / total) * 100)}% · ${completed} of ${st.total || 0} ${o.itemNoun} done`;
         const parts = Object.entries(st.stageCounts || {}).map(([k, v]) => `${k}: ${v}`);
-        rpStages.textContent = parts.length ? `Now running — ${parts.join(' · ')}` : '';
+        E.stages.textContent = parts.length ? `Now running — ${parts.join(' · ')}` : '';
+        const warnings = st.warnings || [];
+        setVisibility(E.warnings, warnings.length > 0, 'block');
+        E.warnings.innerHTML = warnings.map(w => `<div>⚠ ${escapeHtml(w)}</div>`).join('');
+        const failures = st.failures || [];
+        setVisibility(E.failWrap, failures.length > 0, 'block');
+        E.failBody.innerHTML = failures.slice().sort((a, b) => a.index - b.index).map(f => `
+          <tr>
+            <td>${escapeHtml(f.index)}</td>
+            <td>${escapeHtml(f.patientName || '')}${f.patientId ? `<div class="muted">ID ${escapeHtml(f.patientId)}</div>` : ''}</td>
+            ${o.showCase ? `<td>${f.caseSummaryId ? escapeHtml(f.caseSummaryId) : '—'}</td>` : ''}
+            <td>${escapeHtml(f.stage || '')}</td>
+            <td class="err">${escapeHtml(f.error || '')}</td>
+          </tr>`).join('');
+      },
+      finish(st, errorText){
+        this.update(st);
+        E.stages.textContent = '';
+        E.barRun.style.width = '0%';
+        if (errorText) E.label.textContent = `Run failed · ${st.passed || 0} passed · ${st.failed || 0} failed`;
+        else if (!st.failed) E.label.textContent = `Completed · all ${st.passed || 0} passed`;
+        else E.label.textContent = `Completed · ${st.passed || 0} passed · ${st.failed || 0} failed`;
       }
-      this.renderWarnings(st.warnings || []);
-      this.renderFailures(st.failures || []);
-    },
-    renderWarnings(list){
-      if (!rpWarnings) return;
-      setVisibility(rpWarnings, list.length > 0, 'block');
-      rpWarnings.innerHTML = list.map(w => `<div>⚠ ${escapeHtml(w)}</div>`).join('');
-    },
-    renderFailures(list){
-      if (!rpFailuresWrap || !rpFailuresBody) return;
-      setVisibility(rpFailuresWrap, list.length > 0, 'block');
-      rpFailuresBody.innerHTML = list.slice().sort((a, b) => a.index - b.index).map(f => `
-        <tr>
-          <td>${escapeHtml(f.index)}</td>
-          <td>${escapeHtml(f.patientName || '')}${f.patientId ? `<div class="muted">ID ${escapeHtml(f.patientId)}</div>` : ''}</td>
-          <td>${f.caseSummaryId ? escapeHtml(f.caseSummaryId) : '—'}</td>
-          <td>${escapeHtml(f.stage || '')}</td>
-          <td class="err">${escapeHtml(f.error || '')}</td>
-        </tr>`).join('');
-    },
-    finish(st, errorText){
-      this.update(st);
-      if (rpStages) rpStages.textContent = '';
-      if (runProgressFill) runProgressFill.style.width = '0%';
-      if (!runProgressLabel) return;
-      if (errorText) runProgressLabel.textContent = `Run failed · ${st.passed || 0} passed · ${st.failed || 0} failed`;
-      else if (!st.failed) runProgressLabel.textContent = `Completed · all ${st.passed || 0} passed`;
-      else runProgressLabel.textContent = `Completed · ${st.passed || 0} passed · ${st.failed || 0} failed`;
-    }
-  };
+    };
+  }
 
   let token = null;
   // cached option data for search filtering
@@ -398,6 +409,11 @@
   function escapeHtml(str){
     return String(str == null ? '' : str).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   }
+
+  const runProgress = createRunProgressCard(document.getElementById('runProgressWrap'), { itemNoun: 'cases' });
+  const contractsProgress = createRunProgressCard(document.getElementById('contractsProgress'), { itemNoun: 'contracts', failTitle: 'Failed contracts', nameHeader: 'Contract', showCase: false });
+  const transactionsProgress = createRunProgressCard(document.getElementById('transactionsProgress'), { itemNoun: 'transaction codes', failTitle: 'Failed transaction codes', nameHeader: 'Transaction code', showCase: false });
+  const caseFlagsProgress = createRunProgressCard(document.getElementById('caseFlagsProgress'), { itemNoun: 'case flags', failTitle: 'Failed case flags', nameHeader: 'Case flag', showCase: false });
 
   function renderTable(){
     if (!logTableBody) return;
@@ -475,7 +491,8 @@
   }
 
   // Poll GET /seed/status until the run finishes, streaming logs and case counts into the UI
-  async function pollRunStatus(runId, totalCount) {
+  async function pollRunStatus(runId, totalCount, card) {
+    const progressCard = card || runProgress;
     let logsFrom = 0;
     let consecutiveErrors = 0;
     while (true) {
@@ -494,7 +511,7 @@
         if (typeof st.logsTotal === 'number') logsFrom = st.logsTotal;
         if (elapsedEl && typeof st.elapsedMs === 'number') elapsedEl.textContent = `Total: ${(st.elapsedMs / 1000).toFixed(2)}s`;
         if (st.finished) return st;
-        runProgress.update(Object.assign({ total: totalCount }, st));
+        progressCard.update(Object.assign({ total: totalCount }, st));
       }
       await new Promise(r => setTimeout(r, 1000));
     }
@@ -528,8 +545,8 @@
         showToast('error', msg);
         return start;
       }
-      if (runTargetTracker && start.targetTracker) runTargetTracker.textContent = `Target: ${start.targetTracker}`;
-      const st = await pollRunStatus(start.runId, start.total || targetTotal);
+      if (start.targetTracker) runProgress.setTarget(start.targetTracker);
+      const st = await pollRunStatus(start.runId, start.total || targetTotal, runProgress);
       const final = st.final || {};
       const errText = st.error || final.error;
       runProgress.finish(st, errText);
@@ -1253,16 +1270,45 @@
       details.appendChild(ok);
     }
     if (failed) {
-      const tbl = document.createElement('div');
-      tbl.className = 'rp-fail-scroll';
-      tbl.style.marginTop = '8px';
-      tbl.innerHTML = `<table class="rp-fail-table"><thead><tr><th>#</th><th>Name</th><th>Error</th></tr></thead><tbody>${
-        results.filter(r => !r.ok).map(r => `<tr><td>${escapeHtml(r.index ?? '')}</td><td>${escapeHtml(r.contractName || r.transactionCodeName || r.caseFlagName || '')}</td><td class="err">${escapeHtml(r.error || '')}</td></tr>`).join('')
-      }</tbody></table>`;
-      details.appendChild(tbl);
       showToast('error', `${noun}: ${passed} created, ${failed} failed. ${results.find(r => !r.ok).error || ''}`);
     } else {
       showToast('success', `${noun}: ${passed} of ${total} created.`);
+    }
+  }
+
+  // Start a contracts / transaction codes / case flags run and follow it with the progress card
+  async function executeConfigRun({ endpoint, payload, button, statusEl, card, noun }) {
+    const total = Number(payload && payload.opts && payload.opts.count) || 1;
+    if (button) { button.classList.add('is-loading'); button.disabled = true; }
+    if (statusEl) { statusEl.textContent = 'Running…'; statusEl.style.color = ''; }
+    card.reset(total, noun);
+    try {
+      let start = null;
+      try {
+        const res = await fetch(endpoint, { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
+        try { start = await res.json(); } catch (e) { start = { ok: false, error: `Server returned HTTP ${res.status} with an invalid response` }; }
+      } catch (e) {
+        start = { ok: false, error: 'Could not reach the seeder server: ' + (e && e.message ? e.message : String(e)) };
+      }
+      if (!start || !start.ok || !start.runId) {
+        const stale = start && start.ok && !start.runId && Array.isArray(start.results);
+        const msg = (start && start.error) || (stale ? 'The seeder server is running an older build than this page. Stop it and start it again (npm start), then reload this page.' : `${noun} run could not be started.`);
+        card.finish({ total, completed: 0, passed: 0, failed: 0 }, msg);
+        if (start && Array.isArray(start.logs)) pushApiLogs(start.logs);
+        renderConfigResult(statusEl, { ok: false, error: msg }, total, noun);
+        return;
+      }
+      const st = await pollRunStatus(start.runId, start.total || total, card);
+      const final = st.final || {};
+      const errText = st.error || final.error;
+      card.finish(st, errText);
+      renderConfigResult(statusEl, errText ? { ok: false, error: errText } : final, total, noun);
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      card.finish({ total, completed: 0, passed: 0, failed: 0 }, msg);
+      renderConfigResult(statusEl, { ok: false, error: msg }, total, noun);
+    } finally {
+      if (button) { button.classList.remove('is-loading'); button.disabled = false; }
     }
   }
 
@@ -1289,17 +1335,7 @@
           count: Number(contractsAutoCount && contractsAutoCount.value ? contractsAutoCount.value : 1) || 1
         }
       };
-      contractsSendBtn.disabled = true;
-      if (contractsStatus) contractsStatus.textContent = 'Sending...';
-      try {
-        const res = await fetch('/contracts', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
-        const j = await res.json();
-        renderConfigResult(contractsStatus, j, payload.opts.count, 'Contracts');
-      } catch (e) {
-        if (contractsStatus) { contractsStatus.textContent = 'Failed: could not reach the seeder server (' + (e && e.message ? e.message : e) + ')'; contractsStatus.style.color = '#b91c1c'; }
-      } finally {
-        contractsSendBtn.disabled = false;
-      }
+      await executeConfigRun({ endpoint: '/contracts', payload, button: contractsSendBtn, statusEl: contractsStatus, card: contractsProgress, noun: 'Contracts' });
     });
   }
 
@@ -1322,17 +1358,7 @@
           count: Number(transactionsAutoCount && transactionsAutoCount.value ? transactionsAutoCount.value : 1) || 1
         }
       };
-      transactionsSendBtn.disabled = true;
-      if (transactionsStatus) transactionsStatus.textContent = 'Sending...';
-      try {
-        const res = await fetch('/transaction-codes', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
-        const j = await res.json();
-        renderConfigResult(transactionsStatus, j, payload.opts.count, 'Transaction codes');
-      } catch (e) {
-        if (transactionsStatus) { transactionsStatus.textContent = 'Failed: could not reach the seeder server (' + (e && e.message ? e.message : e) + ')'; transactionsStatus.style.color = '#b91c1c'; }
-      } finally {
-        transactionsSendBtn.disabled = false;
-      }
+      await executeConfigRun({ endpoint: '/transaction-codes', payload, button: transactionsSendBtn, statusEl: transactionsStatus, card: transactionsProgress, noun: 'Transaction Codes' });
     });
   }
 
@@ -1360,17 +1386,7 @@
         if (!String(payload.opts.flagName || '').trim()) { alert('Flag Name is required.'); if (caseFlagName) caseFlagName.focus(); return; }
         if (payload.opts.count === 1 && String(payload.opts.abbreviation || '').length !== 2) { alert('Abbreviation must be exactly 2 letters.'); if (caseFlagAbbreviation) caseFlagAbbreviation.focus(); return; }
       }
-      caseFlagsSendBtn.disabled = true;
-      if (caseFlagsStatus) caseFlagsStatus.textContent = 'Sending...';
-      try {
-        const res = await fetch('/case-flags', { method: 'POST', headers: {'Content-Type':'application/json','token': token || ''}, body: JSON.stringify(payload) });
-        const j = await res.json();
-        renderConfigResult(caseFlagsStatus, j, payload.opts.count, 'Case flags');
-      } catch (e) {
-        if (caseFlagsStatus) { caseFlagsStatus.textContent = 'Failed: could not reach the seeder server (' + (e && e.message ? e.message : e) + ')'; caseFlagsStatus.style.color = '#b91c1c'; }
-      } finally {
-        caseFlagsSendBtn.disabled = false;
-      }
+      await executeConfigRun({ endpoint: '/case-flags', payload, button: caseFlagsSendBtn, statusEl: caseFlagsStatus, card: caseFlagsProgress, noun: 'Case Flags' });
     });
   }
 
