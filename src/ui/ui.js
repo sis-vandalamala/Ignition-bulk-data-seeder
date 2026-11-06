@@ -17,11 +17,6 @@
   const password = $('password');
   const loginBtn = $('loginBtn');
   const logoutBtn = $('logoutBtn');
-  const loginCard = $('loginCard');
-  const loginCardBody = $('loginCardBody');
-  const loginCollapseBtn = $('loginCollapseBtn');
-  const loginCollapseIcon = $('loginCollapseIcon');
-  const loginCollapseLabel = $('loginCollapseLabel');
   const suffix = $('suffix');
   const count = $('count');
   const concurrency = $('concurrency');
@@ -989,16 +984,6 @@
       isAuthenticated = true;
       try { applyOrgTrackers(!!j.isAnesthesiaBilling); } catch (e) {}
       if (logoutBtn) { logoutBtn.classList.remove('is-hidden'); }
-      // Auto-collapse body, keep header visible
-      try {
-        if (loginCardBody) {
-          loginCardBody.style.display = 'none';
-          if (loginCollapseIcon) loginCollapseIcon.style.transform = 'rotate(-90deg)';
-          if (loginCollapseLabel) loginCollapseLabel.textContent = 'Expand';
-          if (loginCollapseBtn) loginCollapseBtn.setAttribute('aria-expanded','false');
-          if (loginCard) loginCard.classList.add('collapsed');
-        }
-      } catch (e) {}
       // Logged in — keep UI clean, skip noisy logs
       setVisibility(authView, false, 'block');
       setVisibility(appShell, true, 'flex');
@@ -1387,24 +1372,6 @@
         if (payload.opts.count === 1 && String(payload.opts.abbreviation || '').length !== 2) { alert('Abbreviation must be exactly 2 letters.'); if (caseFlagAbbreviation) caseFlagAbbreviation.focus(); return; }
       }
       await executeConfigRun({ endpoint: '/case-flags', payload, button: caseFlagsSendBtn, statusEl: caseFlagsStatus, card: caseFlagsProgress, noun: 'Case Flags' });
-    });
-  }
-
-  if (loginCollapseBtn) {
-    loginCollapseBtn.addEventListener('click', () => {
-      if (!loginCardBody) return;
-      const isHidden = loginCardBody.classList.contains(HIDDEN_CLASS);
-      if (isHidden) {
-        setVisibility(loginCardBody, true, 'block');
-        if (loginCollapseIcon) loginCollapseIcon.style.transform = 'rotate(0deg)';
-        if (loginCollapseLabel) loginCollapseLabel.textContent = 'Collapse';
-        if (loginCard) loginCard.classList.remove('collapsed');
-      } else {
-        setVisibility(loginCardBody, false, 'block');
-        if (loginCollapseIcon) loginCollapseIcon.style.transform = 'rotate(-90deg)';
-        if (loginCollapseLabel) loginCollapseLabel.textContent = 'Expand';
-        if (loginCard) loginCard.classList.add('collapsed');
-      }
     });
   }
 
